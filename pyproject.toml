@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manage-dotagents"
+version = "0.1.0"
+description = "CLI for managing .agents protocol configuration"
+readme = "docs/dotagents-management-cli-prd.md"
+requires-python = ">=3.10"
+authors = [{ name = "Augment Agent" }]
+
+[project.scripts]
+manage-dotagents = "dotagents_management_cli.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
