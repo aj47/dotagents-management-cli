@@ -13,6 +13,7 @@ It is especially useful for agents like Auggie that do not have this kind of man
 - lets you browse skills, agents, tasks, memories, MCP servers, and MCP tools
 - supports drilling into individual items
 - lets you toggle supported items on/off from the TUI
+- lets you bulk-enable or bulk-disable all skills when you want to quickly reshape what agents can access
 - supports `global`, `workspace`, and `effective` scope views
 - includes doctor, diff, backup, and config-editing command support underneath the UI
 
@@ -33,6 +34,7 @@ It is especially useful for agents like Auggie that do not have this kind of man
 - `←` — go back to categories
 - `Enter` — inspect selected item
 - `t` — toggle selected item on/off
+- `a` — toggle all skills on/off for the current target scope
 - `g` / `w` / `e` — set scope
 - `s` — cycle scope
 - `d` — toggle dry-run

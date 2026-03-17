@@ -30,6 +30,7 @@ SECRET_HINTS = ("secret", "token", "password", "apikey", "api_key", "key")
 MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup"}
 RESOURCE_ACTION_OPTIONS = [
     ("skill", "Skill"),
+    ("all-skills", "All skills"),
     ("agent", "Agent"),
     ("task", "Task"),
     ("memory", "Memory"),
@@ -138,12 +139,14 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     for kind in ("skill", "agent", "task", "memory", "mcp-server", "mcp-tool"):
         item_parser = enable_subparsers.add_parser(kind)
         item_parser.add_argument("id")
+    enable_subparsers.add_parser("all-skills")
 
     disable_parser = subparsers.add_parser("disable")
     disable_subparsers = disable_parser.add_subparsers(dest="disable_type", required=True)
     for kind in ("skill", "agent", "task", "memory", "mcp-server", "mcp-tool"):
         item_parser = disable_subparsers.add_parser(kind)
         item_parser.add_argument("id")
+    disable_subparsers.add_parser("all-skills")
 
     for verb in ("allow", "deny"):
         parser_obj = subparsers.add_parser(verb)
@@ -591,6 +594,70 @@ def move_resource(root: Path, resource_type: str, resource_id: str, direction: s
     return {"action": "enable", "type": resource_type, "id": resource_id, "from": str(disabled_path), "to": str(active_path)}
 
 
+def bulk_directory_resource_candidates(root: Path, resource_type: str, enabled: bool) -> tuple[list[str], list[dict[str, str]]]:
+    active_dir = root / f"{resource_type}s"
+    disabled_dir = root / ".disabled" / f"{resource_type}s"
+    candidates: list[str] = []
+    skipped: list[dict[str, str]] = []
+    if enabled:
+        if disabled_dir.exists():
+            for item in sorted(disabled_dir.iterdir()):
+                if not item.is_dir():
+                    continue
+                active_path = active_dir / item.name
+                if active_path.exists():
+                    skipped.append({"id": item.name, "reason": f"active copy already exists at {active_path}"})
+                    continue
+                candidates.append(item.name)
+        return candidates, skipped
+    if active_dir.exists():
+        for item in sorted(active_dir.iterdir()):
+            if not item.is_dir():
+                continue
+            disabled_path = disabled_dir / item.name
+            if disabled_path.exists():
+                skipped.append({"id": item.name, "reason": f"disabled copy already exists at {disabled_path}"})
+                continue
+            candidates.append(item.name)
+    return candidates, skipped
+
+
+def mutate_all_directory_resources(ctx: AppContext, scope: str, item_type: str, enabled: bool, dry_run: bool = False) -> dict[str, Any]:
+    root = scope_path(ctx, scope)
+    candidates, skipped = bulk_directory_resource_candidates(root, item_type, enabled)
+    action = "enable" if enabled else "disable"
+    if candidates:
+        make_backup(root, f"{action} all-{item_type}s", dry_run=dry_run)
+    changes = [move_resource(root, item_type, resource_id, action, dry_run=dry_run) for resource_id in candidates]
+    return {
+        "action": action,
+        "type": f"all-{item_type}s",
+        "scope": scope,
+        "changed_count": len(changes),
+        "changed_ids": [change["id"] for change in changes],
+        "skipped": skipped,
+        "dry_run": dry_run,
+    }
+
+
+def render_bulk_directory_resource_result(payload: dict[str, Any]) -> str:
+    action = payload["action"]
+    item_type = payload["type"]
+    scope = payload["scope"]
+    changed_count = payload["changed_count"]
+    changed_ids = payload.get("changed_ids") or []
+    skipped = payload.get("skipped") or []
+    lines = [f"{action.title()}d {changed_count} items for `{item_type}` in {scope} scope."]
+    if changed_ids:
+        lines.append("Changed: " + ", ".join(changed_ids))
+    if skipped:
+        lines.append("Skipped:")
+        lines.extend(f"- {item['id']}: {item['reason']}" for item in skipped)
+    if not changed_ids and not skipped:
+        lines.append("No matching skills were found to change.")
+    return "\n".join(lines)
+
+
 def toggle_metadata_resource(root: Path, resource_type: str, resource_id: str, enabled: bool, dry_run: bool = False) -> dict[str, Any]:
     resource_dir = root / f"{resource_type}s" / resource_id
     disabled_dir = root / ".disabled" / f"{resource_type}s" / resource_id
@@ -856,7 +923,10 @@ def mutate_agent_or_task(ctx: AppContext, scope: str, item_type: str, item_id: s
 def mutate_command(ctx: AppContext, args: argparse.Namespace, enabled: bool) -> CommandResult:
     scope = resolve_write_scope(args, ctx)
     item_type = args.enable_type if enabled else args.disable_type
-    item_id = args.id
+    item_id = getattr(args, "id", None)
+    if item_type == "all-skills":
+        payload = mutate_all_directory_resources(ctx, scope, "skill", enabled, dry_run=args.dry_run)
+        return CommandResult(payload={"scope": scope, "change": payload}, human_text=render_bulk_directory_resource_result(payload))
     if item_type in {"skill", "memory"}:
         payload = mutate_directory_resource(ctx, scope, item_type, item_id, enabled, dry_run=args.dry_run)
     elif item_type in {"agent", "task"}:
@@ -1048,6 +1118,8 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
             "",
             "Use g / w / e or s to change scope.",
         ]
+        if category.key == "skills":
+            message.append("Press a to toggle all skills for the current target scope.")
         if browser_data.warnings:
             message.extend(["", *browser_data.warnings])
         return "\n".join(message)
@@ -1067,6 +1139,8 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         "- Press Enter to inspect",
         "- Press Tab or → to focus items, ← to go back",
     ])
+    if category.key == "skills":
+        lines.append("- Press a to toggle all skills for the current target scope")
     if browser_data.warnings:
         lines.extend(["", "Warnings:", *browser_data.warnings])
     return "\n".join(lines)
@@ -1075,6 +1149,14 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
 def build_toggle_command(category: TuiCategory, item: dict[str, Any]) -> list[str]:
     verb = "disable" if is_item_enabled(item) else "enable"
     return [verb, category.toggle_type, item["id"]]
+
+
+def build_bulk_skills_toggle_command(browser_data: TuiBrowserData) -> list[str]:
+    skills = browser_data.items_by_category.get("skills", [])
+    enabled_skills = [item for item in skills if is_item_enabled(item)]
+    if enabled_skills:
+        return ["disable", "all-skills"]
+    return ["enable", "all-skills"]
 
 
 def cycle_scope(scope: str) -> str:
@@ -1210,6 +1292,8 @@ def prompt_resource_action(
     )
     if not resource_type:
         return None
+    if resource_type == "all-skills":
+        return [verb, resource_type]
     target_id = prompt_text(input_fn, f"Enter the {resource_type} id: ")
     if not target_id:
         return None
@@ -1545,7 +1629,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     for offset, line in enumerate(activity_lines[:activity_space], start=0):
         safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
-    footer = "↑/↓ move  Tab/←/→ switch pane  Enter inspect  t toggle  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
+    footer = "↑/↓ move  Tab/←/→ switch pane  Enter inspect  t toggle item  a toggle all skills  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
     stdscr.refresh()
 
@@ -1647,6 +1731,29 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                 try:
                     state.last_output = run_tui_utility_command(["diff"], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
                     state.status_message = "Diff complete"
+                except CliError as exc:
+                    state.last_output = f"Error: {exc}"
+                    state.status_message = "Error"
+                continue
+            if key == ord("a"):
+                category = current_tui_category(state, browser_data)
+                if category.key != "skills":
+                    state.status_message = "Select Skills to bulk-toggle"
+                    continue
+                target_scope = state.scope
+                if target_scope not in {"global", "workspace"}:
+                    resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                    if not resolved_scope:
+                        state.status_message = "Cancelled"
+                        continue
+                    target_scope = resolved_scope
+                target_browser_data = browser_data if target_scope == state.scope else build_tui_browser_data(ctx, target_scope)
+                command_args = build_bulk_skills_toggle_command(target_browser_data)
+                try:
+                    result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                    state.last_output = result.human_text
+                    state.status_message = f"Bulk toggled skills in {target_scope}"
+                    browser_data = build_tui_browser_data(ctx, state.scope)
                 except CliError as exc:
                     state.last_output = f"Error: {exc}"
                     state.status_message = "Error"

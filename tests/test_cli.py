@@ -45,6 +45,22 @@ class DotagentsCliTests(unittest.TestCase):
         self.run_cli("--workspace", "enable", "skill", "writer")
         self.assertTrue(skill_dir.exists())
 
+    def test_disable_and_enable_all_skills_moves_every_skill(self) -> None:
+        write(self.workspace / ".agents" / "skills" / "writer" / "README.md", "# writer")
+        write(self.workspace / ".agents" / "skills" / "coder" / "README.md", "# coder")
+
+        disable_result = self.run_cli("--workspace", "disable", "all-skills")
+        self.assertIn("Disabled 2 items", disable_result.human_text)
+        self.assertIn("writer", disable_result.human_text)
+        self.assertIn("coder", disable_result.human_text)
+        self.assertTrue((self.workspace / ".agents" / ".disabled" / "skills" / "writer").exists())
+        self.assertTrue((self.workspace / ".agents" / ".disabled" / "skills" / "coder").exists())
+
+        enable_result = self.run_cli("--workspace", "enable", "all-skills")
+        self.assertIn("Enabled 2 items", enable_result.human_text)
+        self.assertTrue((self.workspace / ".agents" / "skills" / "writer").exists())
+        self.assertTrue((self.workspace / ".agents" / "skills" / "coder").exists())
+
     def test_show_agent_explains_skill_availability_and_allow_updates_config(self) -> None:
         write(self.global_agents / "skills" / "writer" / "README.md", "# skill")
         write(self.workspace / ".agents" / "agents" / "assistant" / "agent.md", "---\nenabled: true\n---\n")
