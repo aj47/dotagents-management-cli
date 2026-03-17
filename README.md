@@ -1,11 +1,14 @@
 # manage-dotagents
 
-Interactive terminal UI for managing `.agents` resources across global, workspace, and effective scopes.
+Small terminal UI for managing your `~/.agents` folder so you can quickly enable/disable skills, agents, tasks, memories, and MCP resources.
+
+It is especially useful for agents like Auggie that do not have this kind of management capability built in.
 
 ![manage-dotagents overview](assets/manage-dotagents-overview.png)
 
 ## What it does
 
+- gives you a quick management layer on top of `~/.agents`
 - shows a high-level overview on first load
 - lets you browse skills, agents, tasks, memories, MCP servers, and MCP tools
 - supports drilling into individual items
