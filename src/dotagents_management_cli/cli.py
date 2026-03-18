@@ -1153,10 +1153,10 @@ def build_toggle_command(category: TuiCategory, item: dict[str, Any]) -> list[st
 
 def build_bulk_skills_toggle_command(browser_data: TuiBrowserData) -> list[str]:
     skills = browser_data.items_by_category.get("skills", [])
-    enabled_skills = [item for item in skills if is_item_enabled(item)]
-    if enabled_skills:
-        return ["disable", "all-skills"]
-    return ["enable", "all-skills"]
+    disabled_skills = [item for item in skills if not is_item_enabled(item)]
+    if disabled_skills:
+        return ["enable", "all-skills"]
+    return ["disable", "all-skills"]
 
 
 def cycle_scope(scope: str) -> str:
