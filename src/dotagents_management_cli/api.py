@@ -38,7 +38,7 @@ def get_resources():
         agents.append({
             "id": a["id"],
             "name": a["id"],
-            "type": "task-loop",
+            "type": "agent",
             "scope": a["scope"],
             "status": "in-progress" if a["current_state"] == "present" else "idle",
             "is_symlink": a.get("is_symlink", False),
@@ -72,6 +72,7 @@ def get_resources():
             "name": s["id"],
             "description": f"Skill in {s['scope']} scope",
             "scope": s["scope"],
+            "type": "skill",
             "status": "active" if s["current_state"] == "present" else "inactive",
             "is_symlink": s.get("is_symlink", False),
             "allowed_targets": allowed_targets
