@@ -38,6 +38,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories'>('all');
   const [syncing, setSyncing] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const handleToggle = async (type: string, id: string, isEnabled: boolean) => {
     const action = isEnabled ? 'disable' : 'enable';
@@ -46,6 +47,26 @@ export default function App() {
       if (res.ok) {
         fetch('/api/resources').then(r => r.json()).then(setData).catch(console.error);
       }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTargetToggle = async (skillId: string, targetId: string, isAllowed: boolean) => {
+    const action = isAllowed ? 'deny' : 'allow';
+    try {
+      await fetch(`/api/resources/skill/${skillId}/target/${targetId}/${action}`, { method: 'POST' });
+      fetch('/api/resources').then(r => r.json()).then(setData).catch(console.error);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAgentSkillToggle = async (agentId: string, skillId: string, isAllowed: boolean) => {
+    const action = isAllowed ? 'deny' : 'allow';
+    try {
+      await fetch(`/api/resources/agent/${agentId}/skill/${skillId}/${action}`, { method: 'POST' });
+      fetch('/api/resources').then(r => r.json()).then(setData).catch(console.error);
     } catch (e) {
       console.error(e);
     }
@@ -213,7 +234,10 @@ export default function App() {
                             <h3 className="font-bold text-sm md:text-base uppercase tracking-tight break-words" title={item.name || item.title}>
                               {item.name || item.title}
                             </h3>
-                            {item.type && <span className="font-mono text-[9px] bg-[var(--color-surface)] px-1 py-0.5 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase shrink-0">TYPE: {item.type}</span>}
+                            <div className="flex flex-col gap-1 items-end shrink-0">
+                              {item.type && <span className="font-mono text-[9px] bg-[var(--color-surface)] px-1 py-0.5 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase">TYPE: {item.type}</span>}
+                              {item.is_symlink && <span className="font-mono text-[9px] px-1 py-0.5 border border-dashed border-[var(--color-accent-primary)] text-[var(--color-accent-primary)] uppercase">[SYMLINK]</span>}
+                            </div>
                           </div>
                           <p className="font-mono text-[10px] text-[var(--color-text-muted)] break-all leading-tight">
                             ID: {item.id}
@@ -225,7 +249,15 @@ export default function App() {
                           <StatusBadge status={item.status} />
                         </div>
 
-                        <div className="flex items-center justify-end mt-0.5">
+                        <div className="flex items-center justify-end mt-0.5 gap-1.5">
+                          {(item.type === 'agent' || item.type === 'skill') && (
+                            <button
+                              onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                              className="flex items-center gap-1 px-2 py-1 border font-mono text-[10px] uppercase font-bold transition-all border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-solid hover:border-[var(--color-text-main)] hover:text-[var(--color-text-main)]"
+                            >
+                              {expandedId === item.id ? 'Hide Details' : 'View Details'}
+                            </button>
+                          )}
                           <button
                             onClick={() => handleToggle(group.type, item.id, isEnabled)}
                             className={`flex items-center gap-1 px-2 py-1 border font-mono text-[10px] uppercase font-bold transition-all
@@ -237,6 +269,54 @@ export default function App() {
                             {isEnabled ? 'Disable' : 'Enable'}
                           </button>
                         </div>
+
+                        {expandedId === item.id && item.type === 'agent' && item.allowed_skills && (
+                          <div className="mt-2 border-t border-dashed border-[var(--color-border)] pt-2 flex flex-col gap-1.5">
+                            <h4 className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">Available Skills</h4>
+                            <div className="flex flex-wrap gap-1.5">
+                              {data.skills.map((skill) => {
+                                const hasSkill = item.allowed_skills.includes(skill.id);
+                                return (
+                                  <button
+                                    key={skill.id}
+                                    onClick={() => handleAgentSkillToggle(item.id, skill.id, hasSkill)}
+                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all ${
+                                      hasSkill
+                                        ? 'border-[var(--color-accent-primary)] text-[var(--color-accent-primary)] bg-[var(--color-accent-primary)]/10'
+                                        : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
+                                    }`}
+                                  >
+                                    {skill.id}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {expandedId === item.id && item.type === 'skill' && item.allowed_targets && (
+                          <div className="mt-2 border-t border-dashed border-[var(--color-border)] pt-2 flex flex-col gap-1.5">
+                            <h4 className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">Allowed Targets</h4>
+                            <div className="flex flex-wrap gap-1.5">
+                              {['augment', 'cursor', 'claude-code', 'codex', 'opencode', 'pi', 'gemini'].map((target) => {
+                                const hasTarget = item.allowed_targets.includes(target);
+                                return (
+                                  <button
+                                    key={target}
+                                    onClick={() => handleTargetToggle(item.id, target, hasTarget)}
+                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all ${
+                                      hasTarget
+                                        ? 'border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10'
+                                        : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
+                                    }`}
+                                  >
+                                    {target}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
