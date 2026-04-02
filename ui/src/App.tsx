@@ -7,7 +7,7 @@ const StatusBadge = ({ status }: { status: string }) => {
   const isActive = activeStatuses.includes(status);
 
   return (
-    <div className={`font-mono text-[10px] uppercase px-1.5 py-0.5 border flex items-center gap-1.5 w-max
+    <div className={`font-mono text-[10px] uppercase px-1 py-0.5 border flex items-center gap-1 w-max
       ${isActive
         ? 'border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10'
         : 'border-[var(--color-text-muted)] text-[var(--color-text-muted)] bg-[var(--color-surface)]'}`}>
@@ -20,7 +20,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 const ScopeBadge = ({ scope }: { scope: string }) => {
   const isGlobal = scope === 'global';
   return (
-    <div className={`font-mono text-[10px] uppercase px-1.5 py-0.5 border border-[var(--color-border)] w-max
+    <div className={`font-mono text-[10px] uppercase px-1 py-0.5 border border-[var(--color-border)] w-max
       ${isGlobal ? 'text-[var(--color-accent-primary)]' : 'text-[var(--color-text-main)]'}`}>
       {scope || 'unknown'}
     </div>
@@ -205,30 +205,30 @@ export default function App() {
                     return (
                       <div
                         key={item.id}
-                        className={`group p-3 md:p-4 flex flex-col gap-3
+                        className={`group p-2 md:p-2.5 flex flex-col gap-2
                           ${isEnabled ? 'brutal-card' : 'brutal-card-disabled'}`}
                       >
-                        <div className="flex flex-col gap-1.5">
-                          <div className="flex justify-between items-start gap-2">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between items-start gap-1.5">
                             <h3 className="font-bold text-sm md:text-base uppercase tracking-tight break-words" title={item.name || item.title}>
                               {item.name || item.title}
                             </h3>
-                            {item.type && <span className="font-mono text-[9px] bg-[var(--color-surface)] px-1.5 py-0.5 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase shrink-0">TYPE: {item.type}</span>}
+                            {item.type && <span className="font-mono text-[9px] bg-[var(--color-surface)] px-1 py-0.5 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase shrink-0">TYPE: {item.type}</span>}
                           </div>
-                          <p className="font-mono text-[10px] text-[var(--color-text-muted)] break-all">
+                          <p className="font-mono text-[10px] text-[var(--color-text-muted)] break-all leading-tight">
                             ID: {item.id}
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <ScopeBadge scope={item.scope} />
                           <StatusBadge status={item.status} />
                         </div>
 
-                        <div className="flex items-center justify-end mt-1">
+                        <div className="flex items-center justify-end mt-0.5">
                           <button
                             onClick={() => handleToggle(group.type, item.id, isEnabled)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 border font-mono text-[10px] md:text-xs uppercase font-bold transition-all
+                            className={`flex items-center gap-1 px-2 py-1 border font-mono text-[10px] uppercase font-bold transition-all
                               ${isEnabled
                                 ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
                                 : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
