@@ -193,11 +193,11 @@ export default function App() {
               </div>
 
               {group.items.length === 0 ? (
-                <div className="p-8 border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] font-mono text-center uppercase text-sm">
+                <div className="p-8 border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] font-mono text-center uppercase text-sm rounded-lg">
                   No {group.title.toLowerCase()} found in registry
                 </div>
               ) : (
-                <div className="columns-1 md:columns-2 lg:columns-3 gap-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {group.items.map((item) => {
                     const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
                     const isEnabled = activeStatuses.includes(item.status);
@@ -245,16 +245,6 @@ export default function App() {
             </motion.div>
           ))}
         </AnimatePresence>
-      </div>
-
-      <div className="fixed bottom-0 left-0 w-full overflow-hidden bg-[var(--color-accent-primary)] text-[var(--color-base)] font-mono text-sm font-bold uppercase py-1.5 z-[100] flex whitespace-nowrap border-t-[var(--brutal-border)] border-[var(--color-border)] shadow-[0_-4px_0_0_var(--color-border)]">
-        <div className="flex animate-marquee min-w-max">
-          {[...Array(15)].map((_, i) => (
-            <span key={i} className="mx-4 flex items-center gap-4">
-              <Zap size={14} className="fill-current" /> SYSTEM ONLINE // DOTAGENTS CLI ACTIVE // NOISE INJECTED // AESTHETICS ELEVATED
-            </span>
-          ))}
-        </div>
       </div>
 
     </div>
