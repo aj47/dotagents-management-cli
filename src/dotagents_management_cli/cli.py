@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import abc
 import argparse
 import curses
 import json
@@ -27,7 +28,7 @@ METADATA_FILES = {
 }
 SETTINGS_FILES = ("dotagents-settings.json", "speakmcp-settings.json")
 SECRET_HINTS = ("secret", "token", "password", "apikey", "api_key", "key")
-MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup"}
+MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
 RESOURCE_ACTION_OPTIONS = [
     ("skill", "Skill"),
     ("all-skills", "All skills"),
@@ -67,6 +68,234 @@ class AppContext:
     cwd: Path
     global_root: Path
     workspace_root: Path
+
+
+class AgentAdapter(abc.ABC):
+    @abc.abstractmethod
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        """Push configuration to the agent."""
+        ...
+
+    @abc.abstractmethod
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        """Pull configuration from the agent."""
+        ...
+
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        """Return True if the target is out of sync with the .agents directory."""
+        return False
+
+
+class GenericDirectoryAdapter(AgentAdapter):
+    target_name: str = ""
+    dir_name: str = ""
+    rule_ext: str = "mdc"
+
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        result = {"action": "export", "target": self.target_name, "dry_run": dry_run, "skills_exported": 0, "mcp_exported": False}
+
+        target_dir = ctx.cwd / self.dir_name
+        rules_dir = target_dir / "rules"
+
+        if not dry_run:
+            ensure_dir(rules_dir)
+
+        skills = collect_resources(ctx, scope)["skills"]
+        for skill in skills:
+            if skill["current_state"] != "present":
+                continue
+            skill_dir = Path(skill["source_path"])
+            skill_doc = None
+            for name in ("SKILL.md", "skill.md", "README.md"):
+                candidate = skill_dir / name
+                if candidate.exists():
+                    skill_doc = candidate.read_text(encoding="utf-8")
+                    break
+            if skill_doc is None:
+                continue
+
+            rule_path = rules_dir / f"{skill['id']}.{self.rule_ext}"
+            content = f"---\ndescription: Skill {skill['id']}\nglobs: *\n---\n{skill_doc.strip()}\n"
+            if not dry_run:
+                atomic_write_text(rule_path, content)
+            result["skills_exported"] += 1
+
+        path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
+        if mcp_config:
+            mcp_dest = target_dir / "mcp.json"
+            if not dry_run:
+                atomic_write_json(mcp_dest, {"mcpServers": mcp_servers_from_config(mcp_config)})
+            result["mcp_exported"] = True
+
+        return result
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        result = {"action": "import", "target": self.target_name, "dry_run": dry_run, "skills_imported": 0, "mcp_imported": False}
+        target_dir = ctx.cwd / self.dir_name
+        rules_dir = target_dir / "rules"
+
+        scope_dir = scope_path(ctx, scope)
+        skills_dir = scope_dir / "skills"
+
+        if rules_dir.exists():
+            for rule_file in rules_dir.glob(f"*.{self.rule_ext}"):
+                rule_id = rule_file.stem
+                content = rule_file.read_text(encoding="utf-8")
+                if content.startswith("---\n"):
+                    end = content.find("\n---\n", 4)
+                    if end != -1:
+                        content = content[end + 5:]
+
+                skill_path = skills_dir / rule_id / "SKILL.md"
+                if not dry_run:
+                    ensure_dir(skill_path.parent)
+                    atomic_write_text(skill_path, content.strip() + "\n")
+                result["skills_imported"] += 1
+
+        rules_file = ctx.cwd / f"{self.dir_name}rules"
+        if rules_file.exists():
+            content = rules_file.read_text(encoding="utf-8")
+            skill_path = skills_dir / f"{self.dir_name[1:]}rules" / "SKILL.md"
+            if not dry_run:
+                ensure_dir(skill_path.parent)
+                atomic_write_text(skill_path, content.strip() + "\n")
+            result["skills_imported"] += 1
+
+        mcp_file = target_dir / "mcp.json"
+        if mcp_file.exists():
+            try:
+                target_mcp = load_json_object(mcp_file)
+                if "mcpServers" in target_mcp:
+                    path, mcp_config = read_managed_json(ctx, scope, "mcp.json")
+                    mcp_config["mcpServers"] = target_mcp["mcpServers"]
+                    if not dry_run:
+                        atomic_write_json(path, mcp_config)
+                    result["mcp_imported"] = True
+            except CliError:
+                pass
+
+        return result
+
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        if scope == "effective":
+            source_mtime = max(
+                get_tree_mtime(ctx.workspace_root, {".backups"}) if ctx.workspace_root.exists() else 0.0,
+                get_tree_mtime(ctx.global_root, {".backups"}) if ctx.global_root.exists() else 0.0
+            )
+        else:
+            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups"})
+
+        target_dir = ctx.cwd / self.dir_name
+        target_mtime = get_tree_mtime(target_dir)
+
+        rules_file = ctx.cwd / f"{self.dir_name}rules"
+        if rules_file.exists():
+            target_mtime = max(target_mtime, get_tree_mtime(rules_file))
+
+        return source_mtime > 0 and source_mtime > target_mtime
+
+
+class CursorAdapter(GenericDirectoryAdapter):
+    target_name = "cursor"
+    dir_name = ".cursor"
+    rule_ext = "mdc"
+
+
+class AugmentAdapter(GenericDirectoryAdapter):
+    target_name = "augment"
+    dir_name = ".augment"
+    rule_ext = "md"
+
+
+class CodexAdapter(GenericDirectoryAdapter):
+    target_name = "codex"
+    dir_name = ".codex"
+    rule_ext = "md"
+
+
+class OpenCodeAdapter(GenericDirectoryAdapter):
+    target_name = "opencode"
+    dir_name = ".opencode"
+    rule_ext = "md"
+
+
+class PiAdapter(GenericDirectoryAdapter):
+    target_name = "pi"
+    dir_name = ".pi"
+    rule_ext = "md"
+
+
+class GeminiAdapter(GenericDirectoryAdapter):
+    target_name = "gemini"
+    dir_name = ".gemini"
+    rule_ext = "md"
+
+
+class ClaudeCodeAdapter(AgentAdapter):
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        result = {"action": "export", "target": "claude-code", "dry_run": dry_run, "skills_exported": 0, "mcp_exported": False}
+        path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
+        if mcp_config:
+            mcp_dest = ctx.cwd / "claude.json"
+            if not dry_run:
+                target_mcp = load_json_object(mcp_dest, create_default=True) if mcp_dest.exists() else {}
+                target_mcp["mcpServers"] = mcp_servers_from_config(mcp_config)
+                atomic_write_json(mcp_dest, target_mcp)
+            result["mcp_exported"] = True
+        return result
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        result = {"action": "import", "target": "claude-code", "dry_run": dry_run, "skills_imported": 0, "mcp_imported": False}
+        mcp_file = ctx.cwd / "claude.json"
+        if mcp_file.exists():
+            try:
+                target_mcp = load_json_object(mcp_file)
+                if "mcpServers" in target_mcp:
+                    path, mcp_config = read_managed_json(ctx, scope, "mcp.json")
+                    mcp_config["mcpServers"] = target_mcp["mcpServers"]
+                    if not dry_run:
+                        atomic_write_json(path, mcp_config)
+                    result["mcp_imported"] = True
+            except CliError:
+                pass
+        return result
+
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        if scope == "effective":
+            source_mtime = max(
+                get_tree_mtime(ctx.workspace_root, {".backups"}) if ctx.workspace_root.exists() else 0.0,
+                get_tree_mtime(ctx.global_root, {".backups"}) if ctx.global_root.exists() else 0.0
+            )
+        else:
+            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups"})
+
+        mcp_dest = ctx.cwd / "claude.json"
+        target_mtime = get_tree_mtime(mcp_dest)
+
+        return source_mtime > 0 and source_mtime > target_mtime
+
+
+class DummyAdapter(AgentAdapter):
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "export", "target": "dummy", "dry_run": dry_run}
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "import", "target": "dummy", "dry_run": dry_run}
+
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        return False
+
+
+TARGET_REGISTRY: dict[str, type[AgentAdapter]] = {
+    "augment": AugmentAdapter,
+    "dummy": DummyAdapter,
+    "cursor": CursorAdapter,
+    "claude-code": ClaudeCodeAdapter,
+    "codex": CodexAdapter,
+    "opencode": OpenCodeAdapter,
+    "pi": PiAdapter,
+    "gemini": GeminiAdapter,
+}
 
 
 @dataclass(frozen=True)
@@ -161,6 +390,13 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     restore_parser = backup_subparsers.add_parser("restore")
     restore_parser.add_argument("backup_id")
 
+    sync_parser = subparsers.add_parser("sync")
+    sync_parser.add_argument("--target", required=True, choices=list(TARGET_REGISTRY.keys()))
+    sync_dir_group = sync_parser.add_mutually_exclusive_group(required=True)
+    sync_dir_group.add_argument("--push", action="store_true")
+    sync_dir_group.add_argument("--pull", action="store_true")
+    sync_dir_group.add_argument("--both", action="store_true")
+
     return parser
 
 
@@ -222,6 +458,27 @@ def atomic_write_text(path: Path, text: str) -> None:
 
 def atomic_write_json(path: Path, data: Any) -> None:
     atomic_write_text(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def get_tree_mtime(path: Path, exclude_names: set[str] | None = None) -> float:
+    if not path.exists():
+        return 0.0
+    try:
+        max_mtime = path.stat().st_mtime
+    except OSError:
+        return 0.0
+    if path.is_file():
+        return max_mtime
+    exclude = exclude_names or set()
+    for item in path.rglob("*"):
+        if any(part in exclude for part in item.parts):
+            continue
+        try:
+            if item.exists():
+                max_mtime = max(max_mtime, item.stat().st_mtime)
+        except OSError:
+            pass
+    return max_mtime
 
 
 def load_json_object(path: Path, *, create_default: bool = False) -> dict[str, Any]:
@@ -1014,6 +1271,7 @@ def build_tui_categories() -> list[TuiCategory]:
         TuiCategory("memories", "Memories", "memory"),
         TuiCategory("mcp-servers", "MCP Servers", "mcp-server"),
         TuiCategory("mcp-tools", "MCP Tools", "mcp-tool"),
+        TuiCategory("sync-targets", "Agent Sync", "sync-target"),
     ]
 
 
@@ -1035,6 +1293,32 @@ def build_tui_browser_data(ctx: AppContext, scope: str) -> TuiBrowserData:
         items_by_category["mcp-servers"] = []
         items_by_category["mcp-tools"] = []
         warnings.append(str(exc))
+
+    _, settings = read_json_for_scope(ctx, "effective", "settings")
+    auto_targets = settings.get("auto_sync_targets", [])
+    if not isinstance(auto_targets, list):
+        auto_targets = []
+
+    sync_items = []
+    for target_id, adapter_cls in TARGET_REGISTRY.items():
+        adapter = adapter_cls()
+        is_unsynced = False
+        try:
+            is_unsynced = adapter.check_drift(ctx, scope)
+        except Exception:
+            pass
+
+        sync_items.append({
+            "id": target_id,
+            "type": "sync-target",
+            "current_state": "present",
+            "scope": scope,
+            "adapter": adapter_cls.__name__,
+            "is_unsynced": is_unsynced,
+            "auto_sync": target_id in auto_targets,
+        })
+    items_by_category["sync-targets"] = sync_items
+
     return TuiBrowserData(categories=categories, items_by_category=items_by_category, warnings=warnings)
 
 
@@ -1052,6 +1336,7 @@ def summarize_browser_counts(browser_data: TuiBrowserData) -> list[str]:
         tui_count_label(counts.get("mcp-servers", 0), "MCP server"),
         tui_count_label(counts.get("memories", 0), "memory", "memories"),
         tui_count_label(counts.get("mcp-tools", 0), "MCP tool"),
+        tui_count_label(counts.get("sync-targets", 0), "sync target"),
     ]
 
 
@@ -1092,6 +1377,8 @@ def is_item_enabled(item: dict[str, Any]) -> bool:
 
 
 def format_item_badge(item: dict[str, Any]) -> str:
+    if item.get("type") == "sync-target":
+        return "SYNC"
     return "ON " if is_item_enabled(item) else "OFF"
 
 
@@ -1101,7 +1388,13 @@ def format_category_row(category: TuiCategory, browser_data: TuiBrowserData) -> 
 
 
 def format_item_row(item: dict[str, Any]) -> str:
-    return f"[{format_item_badge(item)}] {item['id']}"
+    base = f"[{format_item_badge(item)}] {item['id']}"
+    if item.get("type") == "sync-target":
+        if item.get("auto_sync"):
+            base += " [Auto-Sync]"
+        if item.get("is_unsynced"):
+            base += " [Unsynced]"
+    return base
 
 
 def category_item_label(category: TuiCategory, item: dict[str, Any]) -> str:
@@ -1123,6 +1416,19 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         if browser_data.warnings:
             message.extend(["", *browser_data.warnings])
         return "\n".join(message)
+    if category.key == "sync-targets":
+        lines = [
+            f"Sync Target: {item['id']}",
+            f"Adapter: {item.get('adapter', 'unknown')}",
+            f"Scope: {item.get('scope', '')}",
+            "",
+            "Actions:",
+            "- Press p to push (export to target)",
+            "- Press u to pull (import from target)",
+            "- Press b to two-way sync (both)",
+            "- Press Tab or → to focus items, ← to go back",
+        ]
+        return "\n".join(lines)
     lines = [
         f"{category_item_label(category, item)}: {item['id']}",
         f"State: {'enabled' if is_item_enabled(item) else 'disabled'} ({item.get('current_state', 'unknown')})",
@@ -1262,7 +1568,7 @@ def run_prompt_interactive_command(
     output_stream: TextIO,
     env: dict[str, str] | None,
 ) -> None:
-    mutating = command_args[0] in {"enable", "disable", "allow", "deny", "set", "backup"}
+    mutating = command_args[0] in {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
     target_scope = scope
     if mutating:
         resolved_scope = interactive_write_scope(input_fn, output_stream, scope)
@@ -1629,7 +1935,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     for offset, line in enumerate(activity_lines[:activity_space], start=0):
         safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
-    footer = "↑/↓ move  Tab/←/→ switch pane  Enter inspect  t toggle item  a toggle all skills  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
+    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  A auto-sync  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
     stdscr.refresh()
 
@@ -1683,6 +1989,69 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
             if key in {curses.KEY_LEFT, ord("h")}:
                 state.focus = "categories"
                 continue
+            if key == ord("p"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        command_args = ["sync", "--target", item["id"], "--push"]
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"Pushed to {item['id']}"
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                continue
+            if key == ord("u"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        command_args = ["sync", "--target", item["id"], "--pull"]
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"Pulled from {item['id']}"
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                continue
+            if key == ord("b"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        command_args = ["sync", "--target", item["id"], "--both"]
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"Two-way synced {item['id']}"
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                continue
             if key == ord("s"):
                 state.scope = cycle_scope(state.scope)
                 state.status_message = f"Scope set to {state.scope}"
@@ -1734,6 +2103,37 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                 except CliError as exc:
                     state.last_output = f"Error: {exc}"
                     state.status_message = "Error"
+                continue
+            if key == ord("A"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+
+                        _, settings = read_json_for_scope(ctx, target_scope, "settings")
+                        targets = list(settings.get("auto_sync_targets", []))
+                        if item["id"] in targets:
+                            targets.remove(item["id"])
+                            msg = f"Disabled Auto-Sync for {item['id']}"
+                        else:
+                            targets.append(item["id"])
+                            msg = f"Enabled Auto-Sync for {item['id']}"
+
+                        try:
+                            result = run_command_for_interactive(["set", "setting", "auto_sync_targets", json.dumps(targets)], ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = msg
+                            browser_data = build_tui_browser_data(ctx, state.scope)
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
                 continue
             if key == ord("a"):
                 category = current_tui_category(state, browser_data)
@@ -1816,6 +2216,53 @@ def run_interactive(
     return run_prompt_interactive(args=args, cwd=cwd, env=env, input_fn=input_fn, output_stream=output_stream)
 
 
+def sync_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    adapter_cls = TARGET_REGISTRY.get(args.target)
+    if not adapter_cls:
+        raise CliError(f"Unsupported sync target `{args.target}`.")
+    adapter = adapter_cls()
+    payload = {"target": args.target, "scope": scope, "operations": []}
+    lines = [f"Syncing with target `{args.target}` in {scope} scope."]
+
+    if args.pull or args.both:
+        result = adapter.import_from_target(ctx, scope, args.dry_run)
+        payload["operations"].append(result)
+        lines.append(f"Import: {result}")
+
+    if args.push or args.both:
+        result = adapter.export_to_target(ctx, scope, args.dry_run)
+        payload["operations"].append(result)
+        lines.append(f"Export: {result}")
+
+    return CommandResult(payload=payload, human_text="\n".join(lines))
+
+
+def trigger_auto_sync(ctx: AppContext, args: argparse.Namespace, result: CommandResult) -> None:
+    if getattr(args, "dry_run", False):
+        return
+    try:
+        scope = resolve_write_scope(args, ctx)
+    except CliError:
+        return
+
+    _, settings = read_json_for_scope(ctx, "effective", "settings")
+    targets = settings.get("auto_sync_targets") or []
+    if not isinstance(targets, list) or not targets:
+        return
+
+    lines = [result.human_text]
+    for target_id in targets:
+        adapter_cls = TARGET_REGISTRY.get(target_id)
+        if adapter_cls:
+            try:
+                adapter_cls().export_to_target(ctx, scope, False)
+                lines.append(f"Auto-synced {target_id}")
+            except Exception as e:
+                lines.append(f"Auto-sync failed for {target_id}: {e}")
+    result.human_text = "\n".join(lines)
+
+
 def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     command = args.command
     if command == "status":
@@ -1832,18 +2279,26 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     if command == "diff":
         return diff_command(ctx)
     if command == "enable":
-        return mutate_command(ctx, args, True)
-    if command == "disable":
-        return mutate_command(ctx, args, False)
-    if command == "allow":
-        return permission_command(ctx, args, True)
-    if command == "deny":
-        return permission_command(ctx, args, False)
-    if command == "set":
-        return set_command(ctx, args)
-    if command == "backup":
-        return backup_command(ctx, args)
-    raise CliError(f"Unsupported command `{command}`.")
+        result = mutate_command(ctx, args, True)
+    elif command == "disable":
+        result = mutate_command(ctx, args, False)
+    elif command == "allow":
+        result = permission_command(ctx, args, True)
+    elif command == "deny":
+        result = permission_command(ctx, args, False)
+    elif command == "set":
+        result = set_command(ctx, args)
+    elif command == "backup":
+        result = backup_command(ctx, args)
+    elif command == "sync":
+        result = sync_command(ctx, args)
+    else:
+        raise CliError(f"Unsupported command `{command}`.")
+
+    if command in {"enable", "disable", "allow", "deny", "set"}:
+        trigger_auto_sync(ctx, args, result)
+
+    return result
 
 
 def execute(argv: list[str] | None = None, *, cwd: Path | None = None, env: dict[str, str] | None = None) -> CommandResult:
