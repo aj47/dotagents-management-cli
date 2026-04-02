@@ -39,6 +39,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories'>('all');
   const [syncing, setSyncing] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loadingToggles, setLoadingToggles] = useState<Record<string, boolean>>({});
 
   const handleToggle = async (type: string, id: string, isEnabled: boolean) => {
     const action = isEnabled ? 'disable' : 'enable';
@@ -53,22 +54,36 @@ export default function App() {
   };
 
   const handleTargetToggle = async (skillId: string, targetId: string, isAllowed: boolean) => {
+    const toggleKey = `target-${skillId}-${targetId}`;
+    if (loadingToggles[toggleKey]) return;
+    setLoadingToggles(prev => ({ ...prev, [toggleKey]: true }));
+
     const action = isAllowed ? 'deny' : 'allow';
     try {
       await fetch(`/api/resources/skill/${skillId}/target/${targetId}/${action}`, { method: 'POST' });
-      fetch('/api/resources').then(r => r.json()).then(setData).catch(console.error);
+      const r = await fetch('/api/resources');
+      setData(await r.json());
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoadingToggles(prev => ({ ...prev, [toggleKey]: false }));
     }
   };
 
   const handleAgentSkillToggle = async (agentId: string, skillId: string, isAllowed: boolean) => {
+    const toggleKey = `skill-${agentId}-${skillId}`;
+    if (loadingToggles[toggleKey]) return;
+    setLoadingToggles(prev => ({ ...prev, [toggleKey]: true }));
+
     const action = isAllowed ? 'deny' : 'allow';
     try {
       await fetch(`/api/resources/agent/${agentId}/skill/${skillId}/${action}`, { method: 'POST' });
-      fetch('/api/resources').then(r => r.json()).then(setData).catch(console.error);
+      const r = await fetch('/api/resources');
+      setData(await r.json());
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoadingToggles(prev => ({ ...prev, [toggleKey]: false }));
     }
   };
 
@@ -276,16 +291,20 @@ export default function App() {
                             <div className="flex flex-wrap gap-1.5">
                               {data.skills.map((skill) => {
                                 const hasSkill = item.allowed_skills.includes(skill.id);
+                                const toggleKey = `skill-${item.id}-${skill.id}`;
+                                const isLoading = loadingToggles[toggleKey];
                                 return (
                                   <button
                                     key={skill.id}
                                     onClick={() => handleAgentSkillToggle(item.id, skill.id, hasSkill)}
-                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all ${
+                                    disabled={isLoading}
+                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all flex items-center gap-1 ${
                                       hasSkill
                                         ? 'border-[var(--color-accent-primary)] text-[var(--color-accent-primary)] bg-[var(--color-accent-primary)]/10'
                                         : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
-                                    }`}
+                                    } ${isLoading ? '!opacity-50 cursor-wait' : ''}`}
                                   >
+                                    {isLoading && <RefreshCw size={8} className="animate-spin" />}
                                     {skill.id}
                                   </button>
                                 );
@@ -300,16 +319,20 @@ export default function App() {
                             <div className="flex flex-wrap gap-1.5">
                               {['augment', 'cursor', 'claude-code', 'codex', 'opencode', 'pi', 'gemini'].map((target) => {
                                 const hasTarget = item.allowed_targets.includes(target);
+                                const toggleKey = `target-${item.id}-${target}`;
+                                const isLoading = loadingToggles[toggleKey];
                                 return (
                                   <button
                                     key={target}
                                     onClick={() => handleTargetToggle(item.id, target, hasTarget)}
-                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all ${
+                                    disabled={isLoading}
+                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all flex items-center gap-1 ${
                                       hasTarget
                                         ? 'border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10'
                                         : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
-                                    }`}
+                                    } ${isLoading ? '!opacity-50 cursor-wait' : ''}`}
                                   >
+                                    {isLoading && <RefreshCw size={8} className="animate-spin" />}
                                     {target}
                                   </button>
                                 );
