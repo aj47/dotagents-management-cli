@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import abc
 import argparse
 import curses
 import json
@@ -67,6 +68,40 @@ class AppContext:
     cwd: Path
     global_root: Path
     workspace_root: Path
+
+
+class AgentAdapter(abc.ABC):
+    @abc.abstractmethod
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        """Push configuration to the agent."""
+        ...
+
+    @abc.abstractmethod
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        """Pull configuration from the agent."""
+        ...
+
+
+class AugmentAdapter(AgentAdapter):
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "export", "target": "augment", "dry_run": dry_run}
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "import", "target": "augment", "dry_run": dry_run}
+
+
+class DummyAdapter(AgentAdapter):
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "export", "target": "dummy", "dry_run": dry_run}
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "import", "target": "dummy", "dry_run": dry_run}
+
+
+TARGET_REGISTRY: dict[str, type[AgentAdapter]] = {
+    "augment": AugmentAdapter,
+    "dummy": DummyAdapter,
+}
 
 
 @dataclass(frozen=True)
@@ -160,6 +195,13 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     backup_subparsers.add_parser("create")
     restore_parser = backup_subparsers.add_parser("restore")
     restore_parser.add_argument("backup_id")
+
+    sync_parser = subparsers.add_parser("sync")
+    sync_parser.add_argument("--target", required=True, choices=list(TARGET_REGISTRY.keys()))
+    sync_dir_group = sync_parser.add_mutually_exclusive_group(required=True)
+    sync_dir_group.add_argument("--push", action="store_true")
+    sync_dir_group.add_argument("--pull", action="store_true")
+    sync_dir_group.add_argument("--both", action="store_true")
 
     return parser
 
@@ -1816,6 +1858,28 @@ def run_interactive(
     return run_prompt_interactive(args=args, cwd=cwd, env=env, input_fn=input_fn, output_stream=output_stream)
 
 
+def sync_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    adapter_cls = TARGET_REGISTRY.get(args.target)
+    if not adapter_cls:
+        raise CliError(f"Unsupported sync target `{args.target}`.")
+    adapter = adapter_cls()
+    payload = {"target": args.target, "scope": scope, "operations": []}
+    lines = [f"Syncing with target `{args.target}` in {scope} scope."]
+
+    if args.pull or args.both:
+        result = adapter.import_from_target(ctx, scope, args.dry_run)
+        payload["operations"].append(result)
+        lines.append(f"Import: {result}")
+
+    if args.push or args.both:
+        result = adapter.export_to_target(ctx, scope, args.dry_run)
+        payload["operations"].append(result)
+        lines.append(f"Export: {result}")
+
+    return CommandResult(payload=payload, human_text="\n".join(lines))
+
+
 def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     command = args.command
     if command == "status":
@@ -1843,6 +1907,8 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
         return set_command(ctx, args)
     if command == "backup":
         return backup_command(ctx, args)
+    if command == "sync":
+        return sync_command(ctx, args)
     raise CliError(f"Unsupported command `{command}`.")
 
 
