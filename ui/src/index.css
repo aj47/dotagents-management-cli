@@ -7,7 +7,7 @@
 }
 
 @layer base {
-  :root, .theme-brutal {
+  :root {
     --font-display-var: 'Bricolage Grotesque', sans-serif;
     --font-mono-var: 'JetBrains Mono', monospace;
 
@@ -25,66 +25,6 @@
     --brutal-radius: 0px;
     --brutal-shadow-hover: 4px 4px 0 0 var(--color-accent-primary);
     --brutal-translate-hover: -2px;
-  }
-
-  .theme-luxury {
-    --font-display-var: 'Playfair Display', serif;
-    --font-mono-var: 'Inter', sans-serif;
-
-    --color-base: #FDFBF7;
-    --color-surface: #FFFFFF;
-    --color-surface-hover: #F5F3ED;
-    --color-border: #E0DDD1;
-    --color-text-main: #1A1A19;
-    --color-text-muted: #7A7873;
-
-    --color-accent-primary: #8C7B50; /* gold-ish */
-    --color-accent-secondary: #4A5D4E; /* muted green */
-
-    --brutal-border: 1px;
-    --brutal-radius: 12px;
-    --brutal-shadow-hover: 0 10px 30px -5px rgba(0,0,0,0.05);
-    --brutal-translate-hover: -4px;
-  }
-
-  .theme-chaos {
-    --font-display-var: 'Syne', sans-serif;
-    --font-mono-var: 'Syne', sans-serif;
-
-    --color-base: #FFD700;
-    --color-surface: #FF00FF;
-    --color-surface-hover: #00FFFF;
-    --color-border: #000000;
-    --color-text-main: #000000;
-    --color-text-muted: #333333;
-
-    --color-accent-primary: #FF0000;
-    --color-accent-secondary: #0000FF;
-
-    --brutal-border: 4px;
-    --brutal-radius: 0px;
-    --brutal-shadow-hover: 8px 8px 0 0 var(--color-border);
-    --brutal-translate-hover: 0px;
-  }
-
-  .theme-retro {
-    --font-display-var: 'VT323', monospace;
-    --font-mono-var: 'VT323', monospace;
-
-    --color-base: #0B0B1A;
-    --color-surface: #12122A;
-    --color-surface-hover: #1A1A3A;
-    --color-border: #FF00FF;
-    --color-text-main: #00FFFF;
-    --color-text-muted: #008888;
-
-    --color-accent-primary: #FF00FF;
-    --color-accent-secondary: #FFFF00;
-
-    --brutal-border: 2px;
-    --brutal-radius: 4px;
-    --brutal-shadow-hover: 0 0 15px var(--color-accent-primary);
-    --brutal-translate-hover: 0px;
   }
 
   body {

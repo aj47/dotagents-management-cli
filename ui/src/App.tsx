@@ -1,80 +1,44 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle, CircleDashed, Play, Terminal, Cpu, Database, Zap, Palette } from 'lucide-react';
-import { agents, skills, tasks, mcpServers, memories } from './mockData';
+import { CheckCircle, CircleDashed, Play, Terminal, Cpu, Database, Zap } from 'lucide-react';
 
-const getVariants = (theme: string) => {
-  if (theme === 'theme-luxury') {
-    return {
-      container: {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1, transition: { staggerChildren: 0.15, delayChildren: 0.2 } }
-      },
-      block: {
-        hidden: { y: 10, opacity: 0, scale: 0.98 },
-        visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'tween', duration: 0.8, ease: [0.25, 1, 0.5, 1] } }
-      }
-    };
+const variants = {
+  container: {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.1 } }
+  },
+  block: {
+    hidden: { y: 20, opacity: 0, scale: 0.95 },
+    visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 14 } }
   }
-  if (theme === 'theme-chaos') {
-    return {
-      container: {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1, transition: { staggerChildren: 0.05, delayChildren: 0 } }
-      },
-      block: {
-        hidden: { y: -50, x: -50, opacity: 0, scale: 0.8, rotate: -5 },
-        visible: { y: 0, x: 0, opacity: 1, scale: 1, rotate: 0, transition: { type: 'spring', stiffness: 300, damping: 10 } }
-      }
-    };
-  }
-  if (theme === 'theme-retro') {
-    return {
-      container: {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1, transition: { staggerChildren: 0.1, delayChildren: 0.1 } }
-      },
-      block: {
-        hidden: { opacity: 0, scale: 1 },
-        visible: { opacity: 1, scale: 1, transition: { type: 'tween', duration: 0.1 } } // Instant appearance
-      }
-    };
-  }
-  // brutal
-  return {
-    container: {
-      hidden: { opacity: 0 },
-      visible: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.1 } }
-    },
-    block: {
-      hidden: { y: 20, opacity: 0, scale: 0.95 },
-      visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 14 } }
-    }
-  };
 };
 
 const StatusDot = ({ active }: { active: boolean }) => (
   <span className={`inline-block w-2 h-2 rounded-full ${active ? 'bg-[var(--color-accent-secondary)] shadow-[0_0_8px_var(--color-accent-secondary)] animate-pulse' : 'bg-[var(--color-border)]'}`} />
 );
 
-const themes = [
-  { id: 'theme-brutal', label: 'Brutal' },
-  { id: 'theme-luxury', label: 'Luxury' },
-  { id: 'theme-chaos', label: 'Chaos' },
-  { id: 'theme-retro', label: 'Retro' }
-];
-
 export default function App() {
-  const [theme, setTheme] = useState(() => localStorage.getItem('app-theme') || 'theme-brutal');
-  const variants = getVariants(theme);
+  const [data, setData] = useState<{
+    agents: any[];
+    skills: any[];
+    tasks: any[];
+    mcpServers: any[];
+    memories: any[];
+  } | null>(null);
 
   useEffect(() => {
-    localStorage.setItem('app-theme', theme);
-    document.documentElement.className = theme;
-  }, [theme]);
+    fetch('/api/resources')
+      .then(res => res.json())
+      .then(setData)
+      .catch(console.error);
+  }, []);
+
+  if (!data) return <div className="p-8 text-[var(--color-text-main)]">Loading...</div>;
+
+  const { agents, skills, tasks, mcpServers, memories } = data;
 
   return (
-    <div className="min-h-screen bg-[var(--color-base)] text-[var(--color-text-main)] p-4 md:p-8 lg:p-12 overflow-x-hidden selection:bg-[var(--color-accent-primary)] selection:text-white transition-colors duration-500">
+    <div className="min-h-screen bg-[var(--color-base)] text-[var(--color-text-main)] p-4 md:p-8 lg:p-12 overflow-x-hidden selection:bg-[var(--color-accent-primary)] selection:text-white">
 
       <header className="mb-16 border-b border-[var(--color-border)] pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <motion.div initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ duration: 0.8, ease: "easeOut" }}>
@@ -91,22 +55,6 @@ export default function App() {
           className="flex flex-col md:items-end gap-4"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
         >
-          <div className="flex flex-wrap gap-2 font-mono text-xs uppercase items-center">
-            <Palette size={14} className="text-[var(--color-text-muted)] mr-1" />
-            {themes.map(t => (
-              <button
-                key={t.id}
-                onClick={() => setTheme(t.id)}
-                className={`px-2 py-1 border transition-colors cursor-pointer ${
-                  theme === t.id
-                    ? 'border-[var(--color-accent-primary)] bg-[var(--color-text-main)] text-[var(--color-base)] font-bold'
-                    : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-main)] hover:border-[var(--color-text-main)]'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
           <div className="flex flex-wrap gap-2 font-mono text-xs uppercase">
             <div className="border border-[var(--color-border)] px-3 py-1 flex items-center gap-2">
               <StatusDot active={true} /> System Online
@@ -123,7 +71,6 @@ export default function App() {
         variants={variants.container}
         initial="hidden"
         animate="visible"
-        key={theme} // Force re-animation when theme changes
       >
         {/* AGENTS: Large striking block */}
         <motion.div variants={variants.block} className="md:col-span-8 lg:col-span-5 brutal-box p-6 flex flex-col gap-6 relative overflow-hidden group">
