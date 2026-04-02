@@ -791,7 +791,7 @@ def make_backup(root: Path, reason: str, dry_run: bool = False) -> dict[str, Any
     ensure_dir(root)
     ensure_dir(backup_root / "snapshot")
     for item in root.iterdir():
-        if item.name == ".backups":
+        if item.name in (".backups", "cache"):
             continue
         destination = backup_root / "snapshot" / item.name
         if item.is_dir():
