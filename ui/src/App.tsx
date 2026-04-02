@@ -107,11 +107,11 @@ export default function App() {
 
       <header className="mb-12 border-b-2 border-[var(--color-border)] pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h1 className="text-4xl md:text-6xl font-display font-black tracking-tighter uppercase leading-[0.85] text-[var(--color-text-main)] flex items-center gap-4">
+          <h1 className="text-4xl md:text-6xl font-display font-black tracking-tighter leading-[0.85] text-[var(--color-text-main)] flex items-center gap-4">
             <Layers className="text-[var(--color-accent-primary)] w-12 h-12 md:w-16 md:h-16" />
             <div>
               .<span className="text-[var(--color-accent-primary)]">agents</span>/<br />
-              <span className="text-[var(--color-text-muted)] text-2xl md:text-4xl">control plane</span>
+              <span className="uppercase text-[var(--color-text-muted)] text-2xl md:text-4xl">control plane</span>
             </div>
           </h1>
         </div>
@@ -197,7 +197,7 @@ export default function App() {
                   No {group.title.toLowerCase()} found in registry
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-3">
+                <div className="columns-1 md:columns-2 lg:columns-3 gap-6 space-y-6">
                   {group.items.map((item) => {
                     const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
                     const isEnabled = activeStatuses.includes(item.status);
@@ -205,31 +205,32 @@ export default function App() {
                     return (
                       <div
                         key={item.id}
-                        className={`group p-4 border-2 transition-all duration-300 flex flex-col md:flex-row md:items-center justify-between gap-4
-                          ${isEnabled ? 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-text-muted)]' : 'border-dashed border-[var(--color-border)] bg-transparent opacity-70 hover:opacity-100'}`}
+                        className={`group p-6 flex flex-col gap-6
+                          ${isEnabled ? 'brutal-card' : 'brutal-card-disabled'}`}
                       >
-                        <div className="flex flex-col gap-1 md:w-1/3">
-                          <h3 className="font-bold text-lg uppercase tracking-tight truncate" title={item.name || item.title}>
-                            {item.name || item.title}
-                          </h3>
-                          <p className="font-mono text-xs text-[var(--color-text-muted)] truncate">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-start gap-4">
+                            <h3 className="font-bold text-xl uppercase tracking-tight break-words" title={item.name || item.title}>
+                              {item.name || item.title}
+                            </h3>
+                            {item.type && <span className="font-mono text-[10px] bg-[var(--color-surface)] px-2 py-1 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase shrink-0">TYPE: {item.type}</span>}
+                          </div>
+                          <p className="font-mono text-xs text-[var(--color-text-muted)] break-all">
                             ID: {item.id}
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-4 flex-wrap md:w-1/3">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <ScopeBadge scope={item.scope} />
                           <StatusBadge status={item.status} />
                         </div>
 
-                        <div className="flex items-center gap-6 justify-end md:w-1/3">
-                          {item.type && <span className="font-mono text-xs text-[var(--color-text-muted)] uppercase hidden xl:block">TYPE: {item.type}</span>}
-
+                        <div className="flex items-center justify-end mt-2">
                           <button
                             onClick={() => handleToggle(group.type, item.id, isEnabled)}
-                            className={`flex items-center gap-2 px-4 py-2 border-2 font-mono text-sm uppercase font-bold transition-all
+                            className={`flex items-center gap-2 px-5 py-2.5 border-2 font-mono text-sm uppercase font-bold transition-all
                               ${isEnabled
-                                ? 'border-[var(--color-text-muted)] text-[var(--color-text-main)] hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
+                                ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
                                 : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
                           >
                             <Power size={16} />
@@ -244,6 +245,16 @@ export default function App() {
             </motion.div>
           ))}
         </AnimatePresence>
+      </div>
+
+      <div className="fixed bottom-0 left-0 w-full overflow-hidden bg-[var(--color-accent-primary)] text-[var(--color-base)] font-mono text-sm font-bold uppercase py-1.5 z-[100] flex whitespace-nowrap border-t-[var(--brutal-border)] border-[var(--color-border)] shadow-[0_-4px_0_0_var(--color-border)]">
+        <div className="flex animate-marquee min-w-max">
+          {[...Array(15)].map((_, i) => (
+            <span key={i} className="mx-4 flex items-center gap-4">
+              <Zap size={14} className="fill-current" /> SYSTEM ONLINE // DOTAGENTS CLI ACTIVE // NOISE INJECTED // AESTHETICS ELEVATED
+            </span>
+          ))}
+        </div>
       </div>
 
     </div>
