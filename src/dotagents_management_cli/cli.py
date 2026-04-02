@@ -81,6 +81,10 @@ class AgentAdapter(abc.ABC):
         """Pull configuration from the agent."""
         ...
 
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        """Return True if the target is out of sync with the .agents directory."""
+        return False
+
 
 class GenericDirectoryAdapter(AgentAdapter):
     target_name: str = ""
@@ -172,6 +176,24 @@ class GenericDirectoryAdapter(AgentAdapter):
 
         return result
 
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        if scope == "effective":
+            source_mtime = max(
+                get_tree_mtime(ctx.workspace_root, {".backups"}) if ctx.workspace_root.exists() else 0.0,
+                get_tree_mtime(ctx.global_root, {".backups"}) if ctx.global_root.exists() else 0.0
+            )
+        else:
+            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups"})
+
+        target_dir = ctx.cwd / self.dir_name
+        target_mtime = get_tree_mtime(target_dir)
+
+        rules_file = ctx.cwd / f"{self.dir_name}rules"
+        if rules_file.exists():
+            target_mtime = max(target_mtime, get_tree_mtime(rules_file))
+
+        return source_mtime > 0 and source_mtime > target_mtime
+
 
 class CursorAdapter(GenericDirectoryAdapter):
     target_name = "cursor"
@@ -238,6 +260,20 @@ class ClaudeCodeAdapter(AgentAdapter):
                 pass
         return result
 
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        if scope == "effective":
+            source_mtime = max(
+                get_tree_mtime(ctx.workspace_root, {".backups"}) if ctx.workspace_root.exists() else 0.0,
+                get_tree_mtime(ctx.global_root, {".backups"}) if ctx.global_root.exists() else 0.0
+            )
+        else:
+            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups"})
+
+        mcp_dest = ctx.cwd / "claude.json"
+        target_mtime = get_tree_mtime(mcp_dest)
+
+        return source_mtime > 0 and source_mtime > target_mtime
+
 
 class DummyAdapter(AgentAdapter):
     def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
@@ -245,6 +281,9 @@ class DummyAdapter(AgentAdapter):
 
     def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
         return {"action": "import", "target": "dummy", "dry_run": dry_run}
+
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        return False
 
 
 TARGET_REGISTRY: dict[str, type[AgentAdapter]] = {
@@ -419,6 +458,27 @@ def atomic_write_text(path: Path, text: str) -> None:
 
 def atomic_write_json(path: Path, data: Any) -> None:
     atomic_write_text(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def get_tree_mtime(path: Path, exclude_names: set[str] | None = None) -> float:
+    if not path.exists():
+        return 0.0
+    try:
+        max_mtime = path.stat().st_mtime
+    except OSError:
+        return 0.0
+    if path.is_file():
+        return max_mtime
+    exclude = exclude_names or set()
+    for item in path.rglob("*"):
+        if any(part in exclude for part in item.parts):
+            continue
+        try:
+            if item.exists():
+                max_mtime = max(max_mtime, item.stat().st_mtime)
+        except OSError:
+            pass
+    return max_mtime
 
 
 def load_json_object(path: Path, *, create_default: bool = False) -> dict[str, Any]:
@@ -1236,12 +1296,20 @@ def build_tui_browser_data(ctx: AppContext, scope: str) -> TuiBrowserData:
 
     sync_items = []
     for target_id, adapter_cls in TARGET_REGISTRY.items():
+        adapter = adapter_cls()
+        is_unsynced = False
+        try:
+            is_unsynced = adapter.check_drift(ctx, scope)
+        except Exception:
+            pass
+
         sync_items.append({
             "id": target_id,
             "type": "sync-target",
             "current_state": "present",
             "scope": scope,
-            "adapter": adapter_cls.__name__
+            "adapter": adapter_cls.__name__,
+            "is_unsynced": is_unsynced,
         })
     items_by_category["sync-targets"] = sync_items
 
@@ -1314,7 +1382,10 @@ def format_category_row(category: TuiCategory, browser_data: TuiBrowserData) -> 
 
 
 def format_item_row(item: dict[str, Any]) -> str:
-    return f"[{format_item_badge(item)}] {item['id']}"
+    base = f"[{format_item_badge(item)}] {item['id']}"
+    if item.get("type") == "sync-target" and item.get("is_unsynced"):
+        return f"{base} [Unsynced]"
+    return base
 
 
 def category_item_label(category: TuiCategory, item: dict[str, Any]) -> str:
