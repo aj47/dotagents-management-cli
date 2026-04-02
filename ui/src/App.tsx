@@ -95,8 +95,8 @@ export default function App() {
   if (!data) return <div className="p-8 text-[var(--color-text-main)] font-mono animate-pulse">Initializing Control Plane...</div>;
 
   const resourceGroups = [
-    { key: 'agents', title: 'Agents', icon: Cpu, items: data.agents, type: 'agent' },
     { key: 'skills', title: 'Skills', icon: BookOpen, items: data.skills, type: 'skill' },
+    { key: 'agents', title: 'Agents', icon: Cpu, items: data.agents, type: 'agent' },
     { key: 'tasks', title: 'Tasks', icon: Activity, items: data.tasks, type: 'task' },
     { key: 'mcpServers', title: 'MCP Servers', icon: Terminal, items: data.mcpServers, type: 'mcp-server' },
     { key: 'memories', title: 'Memories', icon: Database, items: data.memories, type: 'memory' }
@@ -110,7 +110,7 @@ export default function App() {
           <h1 className="text-4xl md:text-6xl font-display font-black tracking-tighter uppercase leading-[0.85] text-[var(--color-text-main)] flex items-center gap-4">
             <Layers className="text-[var(--color-accent-primary)] w-12 h-12 md:w-16 md:h-16" />
             <div>
-              dot<span className="text-[var(--color-accent-primary)]">agents</span><br />
+              .<span className="text-[var(--color-accent-primary)]">agents</span>/<br />
               <span className="text-[var(--color-text-muted)] text-2xl md:text-4xl">control plane</span>
             </div>
           </h1>
