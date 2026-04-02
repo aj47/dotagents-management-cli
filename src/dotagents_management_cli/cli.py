@@ -28,7 +28,7 @@ METADATA_FILES = {
 }
 SETTINGS_FILES = ("dotagents-settings.json", "speakmcp-settings.json")
 SECRET_HINTS = ("secret", "token", "password", "apikey", "api_key", "key")
-MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup"}
+MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
 RESOURCE_ACTION_OPTIONS = [
     ("skill", "Skill"),
     ("all-skills", "All skills"),
@@ -1211,6 +1211,7 @@ def build_tui_categories() -> list[TuiCategory]:
         TuiCategory("memories", "Memories", "memory"),
         TuiCategory("mcp-servers", "MCP Servers", "mcp-server"),
         TuiCategory("mcp-tools", "MCP Tools", "mcp-tool"),
+        TuiCategory("sync-targets", "Agent Sync", "sync-target"),
     ]
 
 
@@ -1232,6 +1233,18 @@ def build_tui_browser_data(ctx: AppContext, scope: str) -> TuiBrowserData:
         items_by_category["mcp-servers"] = []
         items_by_category["mcp-tools"] = []
         warnings.append(str(exc))
+
+    sync_items = []
+    for target_id, adapter_cls in TARGET_REGISTRY.items():
+        sync_items.append({
+            "id": target_id,
+            "type": "sync-target",
+            "current_state": "present",
+            "scope": scope,
+            "adapter": adapter_cls.__name__
+        })
+    items_by_category["sync-targets"] = sync_items
+
     return TuiBrowserData(categories=categories, items_by_category=items_by_category, warnings=warnings)
 
 
@@ -1249,6 +1262,7 @@ def summarize_browser_counts(browser_data: TuiBrowserData) -> list[str]:
         tui_count_label(counts.get("mcp-servers", 0), "MCP server"),
         tui_count_label(counts.get("memories", 0), "memory", "memories"),
         tui_count_label(counts.get("mcp-tools", 0), "MCP tool"),
+        tui_count_label(counts.get("sync-targets", 0), "sync target"),
     ]
 
 
@@ -1289,6 +1303,8 @@ def is_item_enabled(item: dict[str, Any]) -> bool:
 
 
 def format_item_badge(item: dict[str, Any]) -> str:
+    if item.get("type") == "sync-target":
+        return "SYNC"
     return "ON " if is_item_enabled(item) else "OFF"
 
 
@@ -1320,6 +1336,19 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         if browser_data.warnings:
             message.extend(["", *browser_data.warnings])
         return "\n".join(message)
+    if category.key == "sync-targets":
+        lines = [
+            f"Sync Target: {item['id']}",
+            f"Adapter: {item.get('adapter', 'unknown')}",
+            f"Scope: {item.get('scope', '')}",
+            "",
+            "Actions:",
+            "- Press p to push (export to target)",
+            "- Press u to pull (import from target)",
+            "- Press b to two-way sync (both)",
+            "- Press Tab or → to focus items, ← to go back",
+        ]
+        return "\n".join(lines)
     lines = [
         f"{category_item_label(category, item)}: {item['id']}",
         f"State: {'enabled' if is_item_enabled(item) else 'disabled'} ({item.get('current_state', 'unknown')})",
@@ -1459,7 +1488,7 @@ def run_prompt_interactive_command(
     output_stream: TextIO,
     env: dict[str, str] | None,
 ) -> None:
-    mutating = command_args[0] in {"enable", "disable", "allow", "deny", "set", "backup"}
+    mutating = command_args[0] in {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
     target_scope = scope
     if mutating:
         resolved_scope = interactive_write_scope(input_fn, output_stream, scope)
@@ -1826,7 +1855,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     for offset, line in enumerate(activity_lines[:activity_space], start=0):
         safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
-    footer = "↑/↓ move  Tab/←/→ switch pane  Enter inspect  t toggle item  a toggle all skills  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
+    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
     stdscr.refresh()
 
@@ -1879,6 +1908,69 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                 continue
             if key in {curses.KEY_LEFT, ord("h")}:
                 state.focus = "categories"
+                continue
+            if key == ord("p"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        command_args = ["sync", "--target", item["id"], "--push"]
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"Pushed to {item['id']}"
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                continue
+            if key == ord("u"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        command_args = ["sync", "--target", item["id"], "--pull"]
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"Pulled from {item['id']}"
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                continue
+            if key == ord("b"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        command_args = ["sync", "--target", item["id"], "--both"]
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"Two-way synced {item['id']}"
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
                 continue
             if key == ord("s"):
                 state.scope = cycle_scope(state.scope)
