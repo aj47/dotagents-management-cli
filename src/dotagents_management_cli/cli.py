@@ -1294,6 +1294,11 @@ def build_tui_browser_data(ctx: AppContext, scope: str) -> TuiBrowserData:
         items_by_category["mcp-tools"] = []
         warnings.append(str(exc))
 
+    _, settings = read_json_for_scope(ctx, "effective", "settings")
+    auto_targets = settings.get("auto_sync_targets", [])
+    if not isinstance(auto_targets, list):
+        auto_targets = []
+
     sync_items = []
     for target_id, adapter_cls in TARGET_REGISTRY.items():
         adapter = adapter_cls()
@@ -1310,6 +1315,7 @@ def build_tui_browser_data(ctx: AppContext, scope: str) -> TuiBrowserData:
             "scope": scope,
             "adapter": adapter_cls.__name__,
             "is_unsynced": is_unsynced,
+            "auto_sync": target_id in auto_targets,
         })
     items_by_category["sync-targets"] = sync_items
 
@@ -1383,8 +1389,11 @@ def format_category_row(category: TuiCategory, browser_data: TuiBrowserData) -> 
 
 def format_item_row(item: dict[str, Any]) -> str:
     base = f"[{format_item_badge(item)}] {item['id']}"
-    if item.get("type") == "sync-target" and item.get("is_unsynced"):
-        return f"{base} [Unsynced]"
+    if item.get("type") == "sync-target":
+        if item.get("auto_sync"):
+            base += " [Auto-Sync]"
+        if item.get("is_unsynced"):
+            base += " [Unsynced]"
     return base
 
 
@@ -1926,7 +1935,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     for offset, line in enumerate(activity_lines[:activity_space], start=0):
         safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
-    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
+    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  A auto-sync  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
     stdscr.refresh()
 
@@ -2095,6 +2104,37 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                     state.last_output = f"Error: {exc}"
                     state.status_message = "Error"
                 continue
+            if key == ord("A"):
+                category = current_tui_category(state, browser_data)
+                if category.key == "sync-targets":
+                    item = current_tui_item(state, browser_data)
+                    if item:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+
+                        _, settings = read_json_for_scope(ctx, target_scope, "settings")
+                        targets = list(settings.get("auto_sync_targets", []))
+                        if item["id"] in targets:
+                            targets.remove(item["id"])
+                            msg = f"Disabled Auto-Sync for {item['id']}"
+                        else:
+                            targets.append(item["id"])
+                            msg = f"Enabled Auto-Sync for {item['id']}"
+
+                        try:
+                            result = run_command_for_interactive(["set", "setting", "auto_sync_targets", json.dumps(targets)], ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = msg
+                            browser_data = build_tui_browser_data(ctx, state.scope)
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                continue
             if key == ord("a"):
                 category = current_tui_category(state, browser_data)
                 if category.key != "skills":
@@ -2198,6 +2238,31 @@ def sync_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
     return CommandResult(payload=payload, human_text="\n".join(lines))
 
 
+def trigger_auto_sync(ctx: AppContext, args: argparse.Namespace, result: CommandResult) -> None:
+    if getattr(args, "dry_run", False):
+        return
+    try:
+        scope = resolve_write_scope(args, ctx)
+    except CliError:
+        return
+
+    _, settings = read_json_for_scope(ctx, "effective", "settings")
+    targets = settings.get("auto_sync_targets") or []
+    if not isinstance(targets, list) or not targets:
+        return
+
+    lines = [result.human_text]
+    for target_id in targets:
+        adapter_cls = TARGET_REGISTRY.get(target_id)
+        if adapter_cls:
+            try:
+                adapter_cls().export_to_target(ctx, scope, False)
+                lines.append(f"Auto-synced {target_id}")
+            except Exception as e:
+                lines.append(f"Auto-sync failed for {target_id}: {e}")
+    result.human_text = "\n".join(lines)
+
+
 def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     command = args.command
     if command == "status":
@@ -2214,20 +2279,26 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     if command == "diff":
         return diff_command(ctx)
     if command == "enable":
-        return mutate_command(ctx, args, True)
-    if command == "disable":
-        return mutate_command(ctx, args, False)
-    if command == "allow":
-        return permission_command(ctx, args, True)
-    if command == "deny":
-        return permission_command(ctx, args, False)
-    if command == "set":
-        return set_command(ctx, args)
-    if command == "backup":
-        return backup_command(ctx, args)
-    if command == "sync":
-        return sync_command(ctx, args)
-    raise CliError(f"Unsupported command `{command}`.")
+        result = mutate_command(ctx, args, True)
+    elif command == "disable":
+        result = mutate_command(ctx, args, False)
+    elif command == "allow":
+        result = permission_command(ctx, args, True)
+    elif command == "deny":
+        result = permission_command(ctx, args, False)
+    elif command == "set":
+        result = set_command(ctx, args)
+    elif command == "backup":
+        result = backup_command(ctx, args)
+    elif command == "sync":
+        result = sync_command(ctx, args)
+    else:
+        raise CliError(f"Unsupported command `{command}`.")
+
+    if command in {"enable", "disable", "allow", "deny", "set"}:
+        trigger_auto_sync(ctx, args, result)
+
+    return result
 
 
 def execute(argv: list[str] | None = None, *, cwd: Path | None = None, env: dict[str, str] | None = None) -> CommandResult:
