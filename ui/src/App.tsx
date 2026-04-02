@@ -1,32 +1,80 @@
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle, CircleDashed, Play, Terminal, Cpu, Database, Zap } from 'lucide-react';
+import { CheckCircle, CircleDashed, Play, Terminal, Cpu, Database, Zap, Palette } from 'lucide-react';
 import { agents, skills, tasks, mcpServers, memories } from './mockData';
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { staggerChildren: 0.08, delayChildren: 0.1 },
-  },
-};
-
-const blockVariants = {
-  hidden: { y: 20, opacity: 0, scale: 0.95 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    scale: 1,
-    transition: { type: 'spring' as const, stiffness: 120, damping: 14 },
-  },
+const getVariants = (theme: string) => {
+  if (theme === 'theme-luxury') {
+    return {
+      container: {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1, transition: { staggerChildren: 0.15, delayChildren: 0.2 } }
+      },
+      block: {
+        hidden: { y: 10, opacity: 0, scale: 0.98 },
+        visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'tween', duration: 0.8, ease: [0.25, 1, 0.5, 1] } }
+      }
+    };
+  }
+  if (theme === 'theme-chaos') {
+    return {
+      container: {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1, transition: { staggerChildren: 0.05, delayChildren: 0 } }
+      },
+      block: {
+        hidden: { y: -50, x: -50, opacity: 0, scale: 0.8, rotate: -5 },
+        visible: { y: 0, x: 0, opacity: 1, scale: 1, rotate: 0, transition: { type: 'spring', stiffness: 300, damping: 10 } }
+      }
+    };
+  }
+  if (theme === 'theme-retro') {
+    return {
+      container: {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1, transition: { staggerChildren: 0.1, delayChildren: 0.1 } }
+      },
+      block: {
+        hidden: { opacity: 0, scale: 1 },
+        visible: { opacity: 1, scale: 1, transition: { type: 'tween', duration: 0.1 } } // Instant appearance
+      }
+    };
+  }
+  // brutal
+  return {
+    container: {
+      hidden: { opacity: 0 },
+      visible: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.1 } }
+    },
+    block: {
+      hidden: { y: 20, opacity: 0, scale: 0.95 },
+      visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 14 } }
+    }
+  };
 };
 
 const StatusDot = ({ active }: { active: boolean }) => (
   <span className={`inline-block w-2 h-2 rounded-full ${active ? 'bg-[var(--color-accent-secondary)] shadow-[0_0_8px_var(--color-accent-secondary)] animate-pulse' : 'bg-[var(--color-border)]'}`} />
 );
 
+const themes = [
+  { id: 'theme-brutal', label: 'Brutal' },
+  { id: 'theme-luxury', label: 'Luxury' },
+  { id: 'theme-chaos', label: 'Chaos' },
+  { id: 'theme-retro', label: 'Retro' }
+];
+
 export default function App() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('app-theme') || 'theme-brutal');
+  const variants = getVariants(theme);
+
+  useEffect(() => {
+    localStorage.setItem('app-theme', theme);
+    document.documentElement.className = theme;
+  }, [theme]);
+
   return (
-    <div className="min-h-screen bg-[var(--color-base)] text-[var(--color-text-main)] p-4 md:p-8 lg:p-12 overflow-x-hidden selection:bg-[var(--color-accent-primary)] selection:text-white">
+    <div className="min-h-screen bg-[var(--color-base)] text-[var(--color-text-main)] p-4 md:p-8 lg:p-12 overflow-x-hidden selection:bg-[var(--color-accent-primary)] selection:text-white transition-colors duration-500">
 
       <header className="mb-16 border-b border-[var(--color-border)] pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <motion.div initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ duration: 0.8, ease: "easeOut" }}>
@@ -40,26 +88,45 @@ export default function App() {
         </motion.div>
 
         <motion.div
-          className="flex flex-wrap gap-2 font-mono text-xs uppercase"
+          className="flex flex-col md:items-end gap-4"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
         >
-          <div className="border border-[var(--color-border)] px-3 py-1 flex items-center gap-2">
-            <StatusDot active={true} /> System Online
+          <div className="flex flex-wrap gap-2 font-mono text-xs uppercase items-center">
+            <Palette size={14} className="text-[var(--color-text-muted)] mr-1" />
+            {themes.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTheme(t.id)}
+                className={`px-2 py-1 border transition-colors cursor-pointer ${
+                  theme === t.id
+                    ? 'border-[var(--color-accent-primary)] bg-[var(--color-text-main)] text-[var(--color-base)] font-bold'
+                    : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-main)] hover:border-[var(--color-text-main)]'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
-          <div className="border border-[var(--color-border)] px-3 py-1 bg-[var(--color-text-main)] text-[var(--color-base)] font-bold">
-            <Zap size={14} className="inline mr-1" /> Override
+          <div className="flex flex-wrap gap-2 font-mono text-xs uppercase">
+            <div className="border border-[var(--color-border)] px-3 py-1 flex items-center gap-2">
+              <StatusDot active={true} /> System Online
+            </div>
+            <div className="border border-[var(--color-border)] px-3 py-1 bg-[var(--color-text-main)] text-[var(--color-base)] font-bold">
+              <Zap size={14} className="inline mr-1" /> Override
+            </div>
           </div>
         </motion.div>
       </header>
 
       <motion.div
         className="grid grid-cols-1 md:grid-cols-12 gap-6 auto-rows-[minmax(100px,auto)]"
-        variants={containerVariants}
+        variants={variants.container}
         initial="hidden"
         animate="visible"
+        key={theme} // Force re-animation when theme changes
       >
         {/* AGENTS: Large striking block */}
-        <motion.div variants={blockVariants} className="md:col-span-8 lg:col-span-5 brutal-box p-6 flex flex-col gap-6 relative overflow-hidden group">
+        <motion.div variants={variants.block} className="md:col-span-8 lg:col-span-5 brutal-box p-6 flex flex-col gap-6 relative overflow-hidden group">
           <div className="absolute -right-10 -top-10 opacity-5 group-hover:opacity-10 transition-opacity duration-500">
             <Cpu size={240} />
           </div>
@@ -89,7 +156,7 @@ export default function App() {
         </motion.div>
 
         {/* TASKS: Tall dense column */}
-        <motion.div variants={blockVariants} className="md:col-span-4 lg:col-span-3 brutal-box p-6 bg-[var(--color-surface-hover)] border-[var(--color-accent-secondary)]">
+        <motion.div variants={variants.block} className="md:col-span-4 lg:col-span-3 brutal-box p-6 bg-[var(--color-surface-hover)] border-[var(--color-accent-secondary)]">
           <div className="flex items-center gap-2 mb-6">
             <Terminal className="text-[var(--color-accent-secondary)]" size={24} />
             <h2 className="text-xl font-display m-0">Task Queue</h2>
@@ -117,7 +184,7 @@ export default function App() {
         </motion.div>
 
         {/* SKILLS: Horizontal marquee-style or tight grid */}
-        <motion.div variants={blockVariants} className="md:col-span-12 lg:col-span-4 brutal-box p-6 flex flex-col">
+        <motion.div variants={variants.block} className="md:col-span-12 lg:col-span-4 brutal-box p-6 flex flex-col">
           <h2 className="text-xl font-display border-b border-[var(--color-border)] pb-2 mb-4">Skills Registry</h2>
           <div className="flex flex-wrap gap-2">
             {skills.map((skill) => (
@@ -133,7 +200,7 @@ export default function App() {
         </motion.div>
 
         {/* MEMORIES: Abstract floating layout */}
-        <motion.div variants={blockVariants} className="md:col-span-6 lg:col-span-5 brutal-box p-6 bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-base)] border-t-[var(--color-accent-primary)] border-t-4">
+        <motion.div variants={variants.block} className="md:col-span-6 lg:col-span-5 brutal-box p-6 bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-base)] border-t-[var(--color-accent-primary)] border-t-4">
           <div className="flex items-center gap-2 mb-6 text-[var(--color-accent-primary)]">
             <Database size={20} />
             <h2 className="text-xl font-display m-0">Memories</h2>
@@ -149,7 +216,7 @@ export default function App() {
         </motion.div>
 
         {/* MCP SERVERS: Terminal style readout */}
-        <motion.div variants={blockVariants} className="md:col-span-6 lg:col-span-7 brutal-box p-0 bg-black overflow-hidden flex flex-col">
+        <motion.div variants={variants.block} className="md:col-span-6 lg:col-span-7 brutal-box p-0 bg-black overflow-hidden flex flex-col">
           <div className="bg-[var(--color-border)] px-4 py-2 font-mono text-xs text-[var(--color-text-muted)] flex gap-4">
             <span>TERMINAL</span>
             <span>mcp_connect.sh</span>
