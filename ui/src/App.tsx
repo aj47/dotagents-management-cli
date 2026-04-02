@@ -258,15 +258,14 @@ export default function App() {
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-1 flex-wrap mt-0.5">
-                          <ScopeBadge scope={item.scope} />
-                          <StatusBadge status={item.status} />
-                        </div>
-
-                        <div className="flex items-center justify-end mt-0 gap-1">
+                        <div className="flex items-center justify-between gap-1 mt-0.5">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <ScopeBadge scope={item.scope} />
+                            <StatusBadge status={item.status} />
+                          </div>
                           <button
                             onClick={() => handleToggle(group.type, item.id, isEnabled)}
-                            className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all
+                            className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0
                               ${isEnabled
                                 ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
                                 : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
