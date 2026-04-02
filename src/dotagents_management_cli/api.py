@@ -122,3 +122,17 @@ def mutate_resource(resource_type: str, resource_id: str, action: str):
         raise HTTPException(status_code=400, detail=str(e))
 
     return {"status": "success", "action": action, "resource_type": resource_type, "resource_id": resource_id}
+
+from dotagents_management_cli.cli import TARGET_REGISTRY
+
+@app.post("/api/sync")
+def sync_all():
+    ctx = build_context()
+    results = {}
+    for target_id, adapter_cls in TARGET_REGISTRY.items():
+        try:
+            adapter_cls().export_to_target(ctx, "workspace", False)
+            results[target_id] = "success"
+        except Exception as e:
+            results[target_id] = str(e)
+    return {"status": "success", "results": results}

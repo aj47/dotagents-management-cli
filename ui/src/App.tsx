@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, Terminal, Cpu, Database, Zap, BookOpen, Layers, Activity } from 'lucide-react';
+import { Power, Terminal, Cpu, Database, Zap, BookOpen, Layers, Activity, RefreshCw } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
@@ -37,6 +37,7 @@ export default function App() {
   } | null>(null);
 
   const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories'>('all');
+  const [syncing, setSyncing] = useState(false);
 
   const handleToggle = async (type: string, id: string, isEnabled: boolean) => {
     const action = isEnabled ? 'disable' : 'enable';
@@ -48,6 +49,40 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleToggleAll = async (groupType: string, items: any[], enable: boolean) => {
+    const action = enable ? 'enable' : 'disable';
+    const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
+
+    const itemsToToggle = items.filter(item => {
+        const isEnabled = activeStatuses.includes(item.status);
+        return isEnabled !== enable;
+    });
+
+    if (itemsToToggle.length === 0) return;
+
+    try {
+      await Promise.all(itemsToToggle.map(item =>
+        fetch(`/api/resources/${groupType}/${item.id}/${action}`, { method: 'POST' })
+      ));
+      const res = await fetch('/api/resources');
+      setData(await res.json());
+    } catch(e) {
+      console.error(e);
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await fetch('/api/sync', { method: 'POST' });
+      const r = await fetch('/api/resources');
+      setData(await r.json());
+    } catch(e) {
+      console.error(e);
+    }
+    setSyncing(false);
   };
 
   useEffect(() => {
@@ -83,6 +118,17 @@ export default function App() {
 
         <div className="flex flex-col md:items-end gap-4">
           <div className="flex flex-wrap gap-2 font-mono text-xs uppercase">
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className={`border-2 px-3 py-1.5 flex items-center gap-2 font-bold transition-all
+                ${syncing
+                  ? 'border-[var(--color-text-muted)] text-[var(--color-text-muted)]'
+                  : 'border-[var(--color-accent-secondary)] text-[var(--color-base)] bg-[var(--color-accent-secondary)] hover:bg-transparent hover:text-[var(--color-accent-secondary)]'}`}
+            >
+              <RefreshCw size={14} className={syncing ? "animate-spin" : ""} />
+              {syncing ? 'Syncing...' : 'Sync Now'}
+            </button>
             <div className="border-2 border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] px-3 py-1.5 flex items-center gap-2 font-bold bg-[var(--color-accent-secondary)]/10">
               <span className="w-2 h-2 bg-current rounded-full animate-pulse" /> System Online
             </div>
@@ -123,10 +169,28 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="flex flex-col gap-4"
             >
-              <h2 className="text-2xl font-display font-bold uppercase text-[var(--color-text-muted)] flex items-center gap-3 border-b border-[var(--color-border)] pb-2">
-                <group.icon size={24} className="text-[var(--color-accent-primary)]" />
-                {group.title}
-              </h2>
+              <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                <h2 className="text-2xl font-display font-bold uppercase text-[var(--color-text-muted)] flex items-center gap-3">
+                  <group.icon size={24} className="text-[var(--color-accent-primary)]" />
+                  {group.title}
+                </h2>
+                {group.items.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleToggleAll(group.type, group.items, true)}
+                      className="px-3 py-1 border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] font-mono text-xs uppercase hover:border-solid hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] transition-colors"
+                    >
+                      Enable All
+                    </button>
+                    <button
+                      onClick={() => handleToggleAll(group.type, group.items, false)}
+                      className="px-3 py-1 border border-[var(--color-text-muted)] text-[var(--color-text-main)] font-mono text-xs uppercase hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)] transition-colors"
+                    >
+                      Disable All
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {group.items.length === 0 ? (
                 <div className="p-8 border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] font-mono text-center uppercase text-sm">
