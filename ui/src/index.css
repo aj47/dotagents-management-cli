@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-display: 'Bricolage Grotesque', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --color-base: #000000;
+  --color-surface: #111111;
+  --color-surface-hover: #1a1a1a;
+  --color-border: #333333;
+  --color-text-main: #ffffff;
+  --color-text-muted: #888888;
+  
+  --color-accent-primary: #FF3366; /* Vibrant pink/red */
+  --color-accent-secondary: #00FFCC; /* Electric cyan */
+}
+
+@layer base {
+  :root {
+    background-color: var(--color-base);
+    color: var(--color-text-main);
+    font-family: var(--font-mono);
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    padding: 0;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  .brutal-box {
+    @apply border border-[var(--color-border)] bg-[var(--color-surface)] transition-all duration-200;
+  }
+  .brutal-box:hover {
+    @apply border-[var(--color-accent-primary)] shadow-[4px_4px_0_0_var(--color-accent-primary)] translate-x-[-2px] translate-y-[-2px];
+  }
+  
+  .brutal-pill {
+    @apply inline-flex items-center px-2 py-1 text-xs font-bold uppercase tracking-wider border border-[var(--color-border)];
+  }
+}
