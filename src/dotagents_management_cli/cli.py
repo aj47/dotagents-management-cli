@@ -109,6 +109,14 @@ class GenericDirectoryAdapter(AgentAdapter):
             for name in ("SKILL.md", "skill.md", "README.md"):
                 candidate = skill_dir / name
                 if candidate.exists():
+                    try:
+                        meta, _ = parse_frontmatter(candidate)
+                        allowed_targets = meta.get("allowed_targets")
+                        if isinstance(allowed_targets, list) and self.target_name not in allowed_targets:
+                            skill_doc = None
+                            break
+                    except CliError:
+                        pass
                     skill_doc = candidate.read_text(encoding="utf-8")
                     break
             if skill_doc is None:
@@ -319,6 +327,8 @@ class TuiState:
     focus: str = "categories"
     selected_category_index: int = 0
     selected_item_index: int = 0
+    selected_inspect_index: int = 0
+    inspect_items: list[dict[str, Any]] | None = None
     last_output: str = "Welcome to manage-dotagents. Browse categories, inspect items, and press `t` to toggle the selected item."
     status_message: str = "Ready"
 
@@ -350,6 +360,8 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     show_subparsers = show_parser.add_subparsers(dest="show_type", required=True)
     agent_parser = show_subparsers.add_parser("agent")
     agent_parser.add_argument("id")
+    skill_show_parser = show_subparsers.add_parser("skill")
+    skill_show_parser.add_argument("id")
 
     get_parser = subparsers.add_parser("get")
     get_subparsers = get_parser.add_subparsers(dest="get_type", required=True)
@@ -382,7 +394,9 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
         verb_subparsers = parser_obj.add_subparsers(dest=f"{verb}_type", required=True)
         skill_parser = verb_subparsers.add_parser("skill")
         skill_parser.add_argument("skill_id")
-        skill_parser.add_argument("--agent", dest="agent_id", required=True)
+        target_or_agent = skill_parser.add_mutually_exclusive_group(required=True)
+        target_or_agent.add_argument("--agent", dest="agent_id")
+        target_or_agent.add_argument("--target", dest="target_id")
 
     backup_parser = subparsers.add_parser("backup")
     backup_subparsers = backup_parser.add_subparsers(dest="backup_type", required=True)
@@ -609,6 +623,7 @@ def scan_resources_in_scope(scope_name: str, root: Path) -> dict[str, dict[str, 
                     "source_path": str(item),
                     "current_state": state,
                     "reason": "",
+                    "is_symlink": item.is_symlink(),
                 }
                 if kind in {"agents", "tasks"} and state == "present":
                     meta_file = metadata_path(item, kind)
@@ -794,10 +809,12 @@ def make_backup(root: Path, reason: str, dry_run: bool = False) -> dict[str, Any
         if item.name in (".backups", "cache"):
             continue
         destination = backup_root / "snapshot" / item.name
-        if item.is_dir():
-            shutil.copytree(item, destination)
+        if item.is_symlink():
+            destination.symlink_to(os.readlink(item))
+        elif item.is_dir():
+            shutil.copytree(item, destination, symlinks=True)
         else:
-            shutil.copy2(item, destination)
+            shutil.copy2(item, destination, follow_symlinks=False)
     atomic_write_json(backup_root / "metadata.json", payload)
     return payload
 
@@ -814,16 +831,18 @@ def restore_backup(root: Path, backup_id: str, dry_run: bool = False) -> dict[st
     for item in list(root.iterdir()):
         if item.name == ".backups":
             continue
-        if item.is_dir():
-            shutil.rmtree(item)
-        else:
+        if item.is_symlink() or not item.is_dir():
             item.unlink()
+        else:
+            shutil.rmtree(item)
     for item in snapshot_dir.iterdir():
         destination = root / item.name
-        if item.is_dir():
-            shutil.copytree(item, destination)
+        if item.is_symlink():
+            destination.symlink_to(os.readlink(item))
+        elif item.is_dir():
+            shutil.copytree(item, destination, symlinks=True)
         else:
-            shutil.copy2(item, destination)
+            shutil.copy2(item, destination, follow_symlinks=False)
     return changes
 
 
@@ -1010,17 +1029,29 @@ def resource_rows_for_kind(ctx: AppContext, scope: str, kind: str) -> list[dict[
 def status_command(ctx: AppContext, scope: str) -> CommandResult:
     resources = collect_resources(ctx, scope)
     rows = flatten_resources(resources)
+    display_rows = []
+    for row in rows:
+        display_row = dict(row)
+        if display_row.get("is_symlink"):
+            display_row["type"] = f"{display_row['type']} [symlink]"
+        display_rows.append(display_row)
     summary = {kind: len(resources[kind]) for kind in RESOURCE_TYPES}
     text = [f"Scope: {scope}"]
     text.append("Summary: " + ", ".join(f"{kind}={count}" for kind, count in summary.items()))
-    text.append(render_table(rows, ["id", "type", "current_state", "scope", "source_path", "reason"]))
+    text.append(render_table(display_rows, ["id", "type", "current_state", "scope", "source_path", "reason"]))
     return CommandResult(payload={"scope": scope, "summary": summary, "resources": rows}, human_text="\n".join(text))
 
 
 def list_command(ctx: AppContext, scope: str, list_type: str) -> CommandResult:
     if list_type in RESOURCE_TYPES:
         rows = resource_rows_for_kind(ctx, scope, list_type)
-        return CommandResult(payload={"scope": scope, "type": list_type, "items": rows}, human_text=render_table(rows, ["id", "type", "current_state", "scope", "source_path", "reason"]))
+        display_rows = []
+        for row in rows:
+            display_row = dict(row)
+            if display_row.get("is_symlink"):
+                display_row["type"] = f"{display_row['type']} [symlink]"
+            display_rows.append(display_row)
+        return CommandResult(payload={"scope": scope, "type": list_type, "items": rows}, human_text=render_table(display_rows, ["id", "type", "current_state", "scope", "source_path", "reason"]))
     if list_type == "mcp-servers":
         path, config = read_json_for_scope(ctx, scope, "mcp.json")
         rows = build_mcp_server_rows(path, config, scope)
@@ -1072,6 +1103,54 @@ def show_agent_command(ctx: AppContext, scope: str, agent_id: str) -> CommandRes
     payload = {"agent": agent, "skills": skills, "toolConfig": redact_value("toolConfig", tool_cfg)}
     lines = [f"Agent: {agent_id}", f"State: {agent['current_state']}", f"Path: {agent['source_path']}", "Skills:"]
     lines.append(render_table(skills, ["id", "available", "reason"]))
+    return CommandResult(payload=payload, human_text="\n".join(lines))
+
+
+def show_skill_command(ctx: AppContext, scope: str, skill_id: str) -> CommandResult:
+    skills = {item["id"]: item for item in resource_rows_for_kind(ctx, scope, "skills")}
+    if skill_id not in skills:
+        raise CliError(f"Unknown skill `{skill_id}`.")
+    skill = skills[skill_id]
+
+    skill_dir = Path(skill["source_path"])
+    skill_doc_path = None
+    for name in ("SKILL.md", "skill.md", "README.md"):
+        candidate = skill_dir / name
+        if candidate.exists():
+            skill_doc_path = candidate
+            break
+
+    allowed_targets = "All targets"
+    targets = None
+    if skill_doc_path:
+        try:
+            meta, _ = parse_frontmatter(skill_doc_path)
+            targets = meta.get("allowed_targets")
+            if isinstance(targets, list):
+                allowed_targets = ", ".join(targets) if targets else "None"
+        except CliError:
+            pass
+
+    is_symlink = skill_dir.is_symlink()
+
+    lines = [
+        f"Skill: {skill_id}",
+        f"Path: {skill_dir}",
+        f"Scope: {skill.get('scope', 'unknown')}",
+        f"State: {skill.get('current_state', 'unknown')}",
+        f"Symlink: {'Yes' if is_symlink else 'No'}",
+        f"Allowed Targets: {allowed_targets}"
+    ]
+
+    payload = {
+        "id": skill_id,
+        "path": str(skill_dir),
+        "scope": skill.get("scope"),
+        "state": skill.get("current_state"),
+        "is_symlink": is_symlink,
+        "allowed_targets": targets if isinstance(targets, list) else None
+    }
+
     return CommandResult(payload=payload, human_text="\n".join(lines))
 
 
