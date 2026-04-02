@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=JetBrains+Mono:wght@400;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Inter:wght@300;400;500&family=Syne:wght@400..800&family=VT323&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-display: var(--font-display-var);
+  --font-mono: var(--font-mono-var);
+}
+
+@layer base {
+  :root {
+    --font-display-var: 'Inter', sans-serif;
+    --font-mono-var: 'JetBrains Mono', monospace;
+
+    --color-base: #0d0d0d;
+    --color-surface: #141414;
+    --color-surface-hover: #1e1e1e;
+    --color-border: #262626;
+    --color-text-main: #d4d4d4;
+    --color-text-muted: #888888;
+
+    --color-accent-primary: #569cd6; /* Accent blue */
+    --color-accent-secondary: #4ec9b0; /* Accent green */
+    --color-accent-tertiary: #ce9178; /* Accent amber */
+
+    --brutal-border: 1px;
+    --brutal-radius: 4px;
+    --brutal-shadow-hover: 0 8px 16px rgba(0, 0, 0, 0.1);
+    --brutal-translate-hover: -2px;
+    --brutal-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    padding: 0;
+    background-color: var(--color-base);
+    color: var(--color-text-main);
+    font-family: var(--font-mono-var);
+    transition: background-color 0.5s ease, color 0.5s ease;
+    position: relative;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display-var);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  .brutal-box {
+    @apply transition-all duration-300;
+    border: var(--brutal-border) solid var(--color-border);
+    border-radius: var(--brutal-radius);
+    background-color: var(--color-surface);
+  }
+  .brutal-box:hover {
+    border-color: var(--color-accent-primary);
+    box-shadow: var(--brutal-shadow-hover);
+    transform: translateY(var(--brutal-translate-hover));
+    z-index: 10;
+  }
+
+  .brutal-card {
+    @apply transition-all duration-200 relative w-full;
+    border: var(--brutal-border) solid var(--color-border);
+    background-color: var(--color-surface);
+    box-shadow: var(--brutal-shadow);
+  }
+  .brutal-card:hover {
+    transform: translateY(var(--brutal-translate-hover));
+    box-shadow: var(--brutal-shadow-hover);
+    border-color: var(--color-accent-primary);
+    z-index: 10;
+  }
+  .brutal-card-disabled {
+    @apply transition-all duration-200 relative w-full opacity-70 border-dashed;
+    border: var(--brutal-border) dashed var(--color-border);
+    background-color: transparent;
+    box-shadow: none;
+  }
+  .brutal-card-disabled:hover {
+    opacity: 1;
+    border-style: solid;
+    transform: translateY(var(--brutal-translate-hover));
+    box-shadow: var(--brutal-shadow-hover);
+    border-color: var(--color-text-muted);
+    z-index: 10;
+  }
+
+  .brutal-pill {
+    @apply inline-flex items-center px-2 py-1 text-xs font-bold uppercase tracking-wider border border-[var(--color-border)];
+  }
+}

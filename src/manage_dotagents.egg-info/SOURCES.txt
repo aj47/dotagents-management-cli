@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+docs/dotagents-management-cli-prd.md
+src/dotagents_management_cli/__init__.py
+src/dotagents_management_cli/__main__.py
+src/dotagents_management_cli/api.py
+src/dotagents_management_cli/cli.py
+src/manage_dotagents.egg-info/PKG-INFO
+src/manage_dotagents.egg-info/SOURCES.txt
+src/manage_dotagents.egg-info/dependency_links.txt
+src/manage_dotagents.egg-info/entry_points.txt
+src/manage_dotagents.egg-info/requires.txt
+src/manage_dotagents.egg-info/top_level.txt
+tests/test_cli.py
