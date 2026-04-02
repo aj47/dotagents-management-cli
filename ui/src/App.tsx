@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle, CircleDashed, Play, Terminal, Cpu, Database, Zap } from 'lucide-react';
+import { CheckCircle, CircleDashed, Play, Terminal, Cpu, Database, Zap, Power } from 'lucide-react';
 
 const variants = {
   container: {
@@ -9,7 +9,7 @@ const variants = {
   },
   block: {
     hidden: { y: 20, opacity: 0, scale: 0.95 },
-    visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 14 } }
+    visible: { y: 0, opacity: 1, scale: 1, transition: { type: 'spring' as const, stiffness: 120, damping: 14 } }
   }
 };
 
@@ -25,6 +25,17 @@ export default function App() {
     mcpServers: any[];
     memories: any[];
   } | null>(null);
+  const handleToggle = async (type: string, id: string, isEnabled: boolean) => {
+    const action = isEnabled ? 'disable' : 'enable';
+    try {
+      const res = await fetch(`/api/resources/${type}/${id}/${action}`, { method: 'POST' });
+      if (res.ok) {
+        fetch('/api/resources').then(r => r.json()).then(setData).catch(console.error);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     fetch('/api/resources')
@@ -84,7 +95,7 @@ export default function App() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 relative z-10">
-            {agents.map((agent, i) => (
+            {agents.map((agent) => (
               <motion.div
                 key={agent.id}
                 whileHover={{ x: 10 }}
@@ -94,8 +105,13 @@ export default function App() {
                   <h3 className="font-bold text-xl uppercase tracking-tight">{agent.name}</h3>
                   <p className="font-mono text-xs text-[var(--color-text-muted)] mt-1">{agent.id} // {agent.type}</p>
                 </div>
-                <div className="font-mono text-[10px] uppercase px-2 py-1 bg-[var(--color-base)] border border-[var(--color-border)]">
-                  {agent.status}
+                <div className="flex items-center gap-3">
+                  <button onClick={() => handleToggle('agent', agent.id, agent.status === 'in-progress')} className="hover:text-[var(--color-accent-primary)] transition-colors">
+                    <Power size={16} className={agent.status === 'in-progress' ? 'text-[var(--color-accent-secondary)]' : 'text-[var(--color-text-muted)]'} />
+                  </button>
+                  <div className="font-mono text-[10px] uppercase px-2 py-1 bg-[var(--color-base)] border border-[var(--color-border)]">
+                    {agent.status}
+                  </div>
                 </div>
               </motion.div>
             ))}
@@ -111,8 +127,8 @@ export default function App() {
 
           <div className="flex flex-col gap-3">
             {tasks.map(task => (
-              <div key={task.id} className="group cursor-pointer">
-                <div className="flex gap-3 items-start">
+              <div key={task.id} className="group cursor-pointer flex items-start justify-between">
+                <div className="flex gap-3 items-start flex-1">
                   <div className="mt-1">
                     {task.status === 'completed' ? <CheckCircle size={16} className="text-[var(--color-accent-secondary)]" /> :
                      task.status === 'in_progress' ? <Play size={16} className="text-[var(--color-accent-primary)] animate-pulse" /> :
@@ -125,6 +141,9 @@ export default function App() {
                     {task.agent && <div className="text-[10px] font-mono text-[var(--color-accent-primary)] mt-1 opacity-80">{'->'} {task.agent}</div>}
                   </div>
                 </div>
+                <button onClick={() => handleToggle('task', task.id, task.status === 'in_progress')} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 ml-2">
+                  <Power size={14} className={task.status === 'in_progress' ? 'text-[var(--color-accent-secondary)]' : 'text-[var(--color-text-muted)]'} />
+                </button>
               </div>
             ))}
           </div>
@@ -137,10 +156,13 @@ export default function App() {
             {skills.map((skill) => (
               <motion.div
                 key={skill.id}
-                whileHover={{ scale: 1.05, backgroundColor: 'var(--color-text-main)', color: 'var(--color-base)' }}
-                className="border border-[var(--color-border)] px-3 py-2 transition-colors cursor-crosshair"
+                whileHover={{ scale: 1.05 }}
+                className={`border px-3 py-2 transition-colors flex items-center gap-2 ${skill.status === 'active' ? 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-main)]' : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-60'}`}
               >
                 <div className="font-bold text-sm uppercase">{skill.name}</div>
+                <button onClick={() => handleToggle('skill', skill.id, skill.status === 'active')} className="ml-1 hover:text-[var(--color-accent-primary)]">
+                  <Power size={12} className={skill.status === 'active' ? 'text-[var(--color-accent-secondary)]' : 'text-current'} />
+                </button>
               </motion.div>
             ))}
           </div>
@@ -154,8 +176,13 @@ export default function App() {
           </div>
           <div className="space-y-3">
             {memories.map(mem => (
-              <div key={mem.id} className="flex justify-between items-center border-b border-dashed border-[var(--color-border)] pb-2">
-                <span className="font-mono text-sm">{mem.name}</span>
+              <div key={mem.id} className={`flex justify-between items-center border-b border-dashed border-[var(--color-border)] pb-2 ${mem.status === 'active' ? '' : 'opacity-50'}`}>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => handleToggle('memory', mem.id, mem.status === 'active')} className="hover:text-[var(--color-accent-primary)] transition-colors">
+                    <Power size={14} className={mem.status === 'active' ? 'text-[var(--color-accent-secondary)]' : 'text-current'} />
+                  </button>
+                  <span className="font-mono text-sm">{mem.name}</span>
+                </div>
                 <span className="font-mono text-xs text-[var(--color-text-muted)]">{mem.size}</span>
               </div>
             ))}
@@ -175,9 +202,12 @@ export default function App() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 1 + i * 0.2 }}
-                className="flex gap-4"
+                className={`flex gap-4 items-center group ${mcp.status === 'connected' ? '' : 'opacity-50'}`}
               >
                 <span className="text-[var(--color-text-muted)]">{'>'}</span>
+                <button onClick={() => handleToggle('mcp-server', mcp.id, mcp.status === 'connected')} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Power size={12} className={mcp.status === 'connected' ? 'text-[var(--color-accent-secondary)]' : 'text-current'} />
+                </button>
                 <span className={mcp.status === 'connected' ? 'text-[var(--color-accent-secondary)]' : 'text-red-500'}>
                   [{mcp.status.toUpperCase()}]
                 </span>
