@@ -154,6 +154,34 @@ class DotagentsCliTests(unittest.TestCase):
         with mock.patch("sys.stdin", fake_stdin), mock.patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=False):
             self.assertFalse(supports_rich_tui(input, StringIO()))
 
+    def test_cursor_adapter_sync(self) -> None:
+        write(self.workspace / ".agents" / "skills" / "writer" / "SKILL.md", "# writer")
+        write(self.workspace / ".agents" / "mcp.json", json.dumps({"mcpServers": {"browser": {"tools": ["open"]}}}))
+
+        # Push to cursor
+        push_result = self.run_cli("--workspace", "sync", "--target", "cursor", "--push")
+        self.assertIn("Syncing", push_result.human_text)
+        cursor_dir = self.workspace / ".cursor"
+        self.assertTrue((cursor_dir / "rules" / "writer.mdc").exists())
+        self.assertTrue((cursor_dir / "mcp.json").exists())
+        mdc_content = (cursor_dir / "rules" / "writer.mdc").read_text(encoding="utf-8")
+        self.assertIn("description: Skill writer", mdc_content)
+        self.assertIn("# writer", mdc_content)
+
+        # Pull from cursor
+        write(cursor_dir / "rules" / "new_skill.mdc", "---\ndescription: test\nglobs: *\n---\n# new rule")
+        write(self.workspace / ".cursorrules", "# global rules")
+
+        pull_result = self.run_cli("--workspace", "sync", "--target", "cursor", "--pull")
+        self.assertTrue((self.workspace / ".agents" / "skills" / "new_skill" / "SKILL.md").exists())
+        self.assertTrue((self.workspace / ".agents" / "skills" / "cursorrules" / "SKILL.md").exists())
+
+        new_skill_content = (self.workspace / ".agents" / "skills" / "new_skill" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(new_skill_content.strip(), "# new rule")
+
+        cursorrules_content = (self.workspace / ".agents" / "skills" / "cursorrules" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(cursorrules_content.strip(), "# global rules")
+
 
 if __name__ == "__main__":
     unittest.main()

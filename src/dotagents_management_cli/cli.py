@@ -97,10 +97,98 @@ class DummyAdapter(AgentAdapter):
     def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
         return {"action": "import", "target": "dummy", "dry_run": dry_run}
 
+class CursorAdapter(AgentAdapter):
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        result = {"action": "export", "target": "cursor", "dry_run": dry_run, "skills_exported": 0, "mcp_exported": False}
+
+        cursor_dir = ctx.cwd / ".cursor"
+        rules_dir = cursor_dir / "rules"
+
+        if not dry_run:
+            ensure_dir(rules_dir)
+
+        skills = collect_resources(ctx, scope)["skills"]
+        for skill in skills:
+            if skill["current_state"] != "present":
+                continue
+            skill_dir = Path(skill["source_path"])
+            skill_doc = None
+            for name in ("SKILL.md", "skill.md", "README.md"):
+                candidate = skill_dir / name
+                if candidate.exists():
+                    skill_doc = candidate.read_text(encoding="utf-8")
+                    break
+            if skill_doc is None:
+                continue
+
+            rule_path = rules_dir / f"{skill['id']}.mdc"
+            content = f"---\ndescription: Skill {skill['id']}\nglobs: *\n---\n{skill_doc.strip()}\n"
+            if not dry_run:
+                atomic_write_text(rule_path, content)
+            result["skills_exported"] += 1
+
+        path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
+        if mcp_config:
+            mcp_dest = cursor_dir / "mcp.json"
+            if not dry_run:
+                atomic_write_json(mcp_dest, {"mcpServers": mcp_servers_from_config(mcp_config)})
+            result["mcp_exported"] = True
+
+        return result
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        result = {"action": "import", "target": "cursor", "dry_run": dry_run, "skills_imported": 0, "mcp_imported": False}
+        cursor_dir = ctx.cwd / ".cursor"
+        rules_dir = cursor_dir / "rules"
+
+        scope_dir = scope_path(ctx, scope)
+        skills_dir = scope_dir / "skills"
+
+        if rules_dir.exists():
+            for rule_file in rules_dir.glob("*.mdc"):
+                rule_id = rule_file.stem
+                content = rule_file.read_text(encoding="utf-8")
+                if content.startswith("---\n"):
+                    end = content.find("\n---\n", 4)
+                    if end != -1:
+                        content = content[end + 5:]
+
+                skill_path = skills_dir / rule_id / "SKILL.md"
+                if not dry_run:
+                    ensure_dir(skill_path.parent)
+                    atomic_write_text(skill_path, content.strip() + "\n")
+                result["skills_imported"] += 1
+
+        cursorrules_file = ctx.cwd / ".cursorrules"
+        if cursorrules_file.exists():
+            content = cursorrules_file.read_text(encoding="utf-8")
+            skill_path = skills_dir / "cursorrules" / "SKILL.md"
+            if not dry_run:
+                ensure_dir(skill_path.parent)
+                atomic_write_text(skill_path, content.strip() + "\n")
+            result["skills_imported"] += 1
+
+        mcp_file = cursor_dir / "mcp.json"
+        if mcp_file.exists():
+            try:
+                cursor_mcp = load_json_object(mcp_file)
+                if "mcpServers" in cursor_mcp:
+                    path, mcp_config = read_managed_json(ctx, scope, "mcp.json")
+                    mcp_config["mcpServers"] = cursor_mcp["mcpServers"]
+                    if not dry_run:
+                        atomic_write_json(path, mcp_config)
+                    result["mcp_imported"] = True
+            except CliError:
+                pass
+
+        return result
+
+
 
 TARGET_REGISTRY: dict[str, type[AgentAdapter]] = {
     "augment": AugmentAdapter,
     "dummy": DummyAdapter,
+    "cursor": CursorAdapter,
 }
 
 
