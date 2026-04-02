@@ -1,6 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotagents_management_cli.cli import build_context, collect_resources, read_json_for_scope, build_mcp_server_rows
+from dotagents_management_cli.cli import (
+    build_context, collect_resources, read_json_for_scope, build_mcp_server_rows,
+    TARGET_REGISTRY, mutate_directory_resource, mutate_agent_or_task, mutate_mcp,
+    load_json_object, build_skill_availability, parse_frontmatter, mutate_skill_permission,
+    target_permission_command
+)
+from pathlib import Path
+import argparse
 
 app = FastAPI()
 
@@ -18,22 +25,56 @@ def get_resources():
 
     agents = []
     for a in resources.get("agents", []):
+        try:
+            config_path = Path(a["source_path"]) / "config.json"
+            config = load_json_object(config_path, create_default=True) if config_path.exists() else {}
+            allowed_skills = [
+                s["id"] for s in resources.get("skills", [])
+                if build_skill_availability(s, config)["available"]
+            ]
+        except Exception:
+            allowed_skills = []
+
         agents.append({
             "id": a["id"],
             "name": a["id"],
             "type": "task-loop",
             "scope": a["scope"],
-            "status": "in-progress" if a["current_state"] == "present" else "idle"
+            "status": "in-progress" if a["current_state"] == "present" else "idle",
+            "is_symlink": a.get("is_symlink", False),
+            "allowed_skills": allowed_skills
         })
 
     skills = []
     for s in resources.get("skills", []):
+        try:
+            skill_dir = Path(s["source_path"])
+            skill_doc_path = None
+            for name in ("SKILL.md", "skill.md", "README.md"):
+                candidate = skill_dir / name
+                if candidate.exists():
+                    skill_doc_path = candidate
+                    break
+            if skill_doc_path:
+                meta, _ = parse_frontmatter(skill_doc_path)
+                targets = meta.get("allowed_targets")
+                if isinstance(targets, list):
+                    allowed_targets = targets
+                else:
+                    allowed_targets = [t for t in TARGET_REGISTRY.keys() if t != "dummy"]
+            else:
+                allowed_targets = [t for t in TARGET_REGISTRY.keys() if t != "dummy"]
+        except Exception:
+            allowed_targets = [t for t in TARGET_REGISTRY.keys() if t != "dummy"]
+
         skills.append({
             "id": s["id"],
             "name": s["id"],
             "description": f"Skill in {s['scope']} scope",
             "scope": s["scope"],
-            "status": "active" if s["current_state"] == "present" else "inactive"
+            "status": "active" if s["current_state"] == "present" else "inactive",
+            "is_symlink": s.get("is_symlink", False),
+            "allowed_targets": allowed_targets
         })
 
     tasks = []
@@ -43,7 +84,8 @@ def get_resources():
             "title": t["id"].replace("-", " ").title(),
             "scope": t["scope"],
             "status": "in_progress" if t["current_state"] == "present" else "not_started",
-            "agent": None
+            "agent": None,
+            "is_symlink": t.get("is_symlink", False)
         })
 
     memories = []
@@ -53,7 +95,8 @@ def get_resources():
             "name": m["id"].replace("-", " ").title(),
             "size": "? KB",
             "scope": m["scope"],
-            "status": "active" if m["current_state"] == "present" else "archived"
+            "status": "active" if m["current_state"] == "present" else "archived",
+            "is_symlink": m.get("is_symlink", False)
         })
 
     path, mcp_config = read_json_for_scope(ctx, "effective", "mcp.json")
@@ -65,7 +108,8 @@ def get_resources():
             "id": m["id"],
             "name": m["id"],
             "scope": m["scope"],
-            "status": "connected" if m["current_state"] == "present" else "disconnected"
+            "status": "connected" if m["current_state"] == "present" else "disconnected",
+            "is_symlink": False
         })
 
     return {
@@ -122,6 +166,46 @@ def mutate_resource(resource_type: str, resource_id: str, action: str):
         raise HTTPException(status_code=400, detail=str(e))
 
     return {"status": "success", "action": action, "resource_type": resource_type, "resource_id": resource_id}
+
+@app.post("/api/resources/agent/{agent_id}/skill/{skill_id}/{action}")
+def mutate_agent_skill(agent_id: str, skill_id: str, action: str):
+    if action not in ("allow", "deny"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    ctx = build_context()
+    resources = collect_resources(ctx, "effective")
+    found_scope = None
+    for a in resources.get("agents", []):
+        if a["id"] == agent_id:
+            found_scope = a["scope"]
+            break
+    if not found_scope:
+        found_scope = "workspace"
+    try:
+        mutate_skill_permission(ctx, found_scope, agent_id, skill_id, action == "allow")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "success", "action": action, "agent_id": agent_id, "skill_id": skill_id}
+
+@app.post("/api/resources/skill/{skill_id}/target/{target_id}/{action}")
+def mutate_skill_target(skill_id: str, target_id: str, action: str):
+    if action not in ("allow", "deny"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    ctx = build_context()
+    resources = collect_resources(ctx, "effective")
+    found_scope = None
+    for s in resources.get("skills", []):
+        if s["id"] == skill_id:
+            found_scope = s["scope"]
+            break
+    if not found_scope:
+        found_scope = "workspace"
+
+    try:
+        args = argparse.Namespace(target_id=target_id, skill_id=skill_id, dry_run=False)
+        target_permission_command(ctx, args, found_scope, action == "allow")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "success", "action": action, "skill_id": skill_id, "target_id": target_id}
 
 from dotagents_management_cli.cli import TARGET_REGISTRY
 
