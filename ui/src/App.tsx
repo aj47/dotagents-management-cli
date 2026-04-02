@@ -38,7 +38,6 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories'>('all');
   const [syncing, setSyncing] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loadingToggles, setLoadingToggles] = useState<Record<string, boolean>>({});
 
   const handleToggle = async (type: string, id: string, isEnabled: boolean) => {
@@ -265,14 +264,6 @@ export default function App() {
                         </div>
 
                         <div className="flex items-center justify-end mt-0.5 gap-1.5">
-                          {(item.type === 'agent' || item.type === 'skill') && (
-                            <button
-                              onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                              className="flex items-center gap-1 px-2 py-1 border font-mono text-[10px] uppercase font-bold transition-all border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-solid hover:border-[var(--color-text-main)] hover:text-[var(--color-text-main)]"
-                            >
-                              {expandedId === item.id ? 'Hide Details' : 'View Details'}
-                            </button>
-                          )}
                           <button
                             onClick={() => handleToggle(group.type, item.id, isEnabled)}
                             className={`flex items-center gap-1 px-2 py-1 border font-mono text-[10px] uppercase font-bold transition-all
@@ -285,7 +276,7 @@ export default function App() {
                           </button>
                         </div>
 
-                        {expandedId === item.id && item.type === 'agent' && item.allowed_skills && (
+                        {item.type === 'agent' && item.allowed_skills && (
                           <div className="mt-2 border-t border-dashed border-[var(--color-border)] pt-2 flex flex-col gap-1.5">
                             <h4 className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">Available Skills</h4>
                             <div className="flex flex-wrap gap-1.5">
@@ -313,7 +304,7 @@ export default function App() {
                           </div>
                         )}
 
-                        {expandedId === item.id && item.type === 'skill' && item.allowed_targets && (
+                        {item.type === 'skill' && item.allowed_targets && (
                           <div className="mt-2 border-t border-dashed border-[var(--color-border)] pt-2 flex flex-col gap-1.5">
                             <h4 className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">Allowed Targets</h4>
                             <div className="flex flex-wrap gap-1.5">
