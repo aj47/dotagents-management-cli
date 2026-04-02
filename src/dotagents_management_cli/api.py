@@ -22,6 +22,7 @@ def get_resources():
             "id": a["id"],
             "name": a["id"],
             "type": "task-loop",
+            "scope": a["scope"],
             "status": "in-progress" if a["current_state"] == "present" else "idle"
         })
 
@@ -31,6 +32,7 @@ def get_resources():
             "id": s["id"],
             "name": s["id"],
             "description": f"Skill in {s['scope']} scope",
+            "scope": s["scope"],
             "status": "active" if s["current_state"] == "present" else "inactive"
         })
 
@@ -39,6 +41,7 @@ def get_resources():
         tasks.append({
             "id": t["id"],
             "title": t["id"].replace("-", " ").title(),
+            "scope": t["scope"],
             "status": "in_progress" if t["current_state"] == "present" else "not_started",
             "agent": None
         })
@@ -49,6 +52,7 @@ def get_resources():
             "id": m["id"],
             "name": m["id"].replace("-", " ").title(),
             "size": "? KB",
+            "scope": m["scope"],
             "status": "active" if m["current_state"] == "present" else "archived"
         })
 
@@ -60,6 +64,7 @@ def get_resources():
         mcp_servers.append({
             "id": m["id"],
             "name": m["id"],
+            "scope": m["scope"],
             "status": "connected" if m["current_state"] == "present" else "disconnected"
         })
 
