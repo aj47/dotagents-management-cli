@@ -8,22 +8,22 @@
 
 @layer base {
   :root {
-    --font-display-var: 'Bricolage Grotesque', sans-serif;
+    --font-display-var: 'Inter', sans-serif;
     --font-mono-var: 'JetBrains Mono', monospace;
 
-    --color-base: #000000;
-    --color-surface: #111111;
-    --color-surface-hover: #1a1a1a;
-    --color-border: #333333;
-    --color-text-main: #ffffff;
+    --color-base: #0d0d0d;
+    --color-surface: #141414;
+    --color-surface-hover: #1e1e1e;
+    --color-border: #262626;
+    --color-text-main: #d4d4d4;
     --color-text-muted: #888888;
 
-    --color-accent-primary: #FF3366; /* Vibrant pink/red */
-    --color-accent-secondary: #00FFCC; /* Electric cyan */
-    --color-accent-tertiary: #FFEB3B; /* Bright Yellow */
+    --color-accent-primary: #569cd6; /* Accent blue */
+    --color-accent-secondary: #4ec9b0; /* Accent green */
+    --color-accent-tertiary: #ce9178; /* Accent amber */
 
     --brutal-border: 1px;
-    --brutal-radius: 8px;
+    --brutal-radius: 4px;
     --brutal-shadow-hover: 0 8px 16px rgba(0, 0, 0, 0.1);
     --brutal-translate-hover: -2px;
     --brutal-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
