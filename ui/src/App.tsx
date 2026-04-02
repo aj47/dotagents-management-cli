@@ -7,11 +7,11 @@ const StatusBadge = ({ status }: { status: string }) => {
   const isActive = activeStatuses.includes(status);
 
   return (
-    <div className={`font-mono text-[10px] uppercase px-1 py-0.5 border flex items-center gap-1 w-max
+    <div className={`font-mono text-[9px] uppercase px-1 py-0.5 leading-none border flex items-center gap-1 w-max
       ${isActive
         ? 'border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10'
         : 'border-[var(--color-text-muted)] text-[var(--color-text-muted)] bg-[var(--color-surface)]'}`}>
-      <span className={`inline-block w-1.5 h-1.5 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-current opacity-50'}`} />
+      <span className={`inline-block w-1 h-1 rounded-full ${isActive ? 'bg-current animate-pulse' : 'bg-current opacity-50'}`} />
       {status.replace('_', '-')}
     </div>
   );
@@ -20,7 +20,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 const ScopeBadge = ({ scope }: { scope: string }) => {
   const isGlobal = scope === 'global';
   return (
-    <div className={`font-mono text-[10px] uppercase px-1 py-0.5 border border-[var(--color-border)] w-max
+    <div className={`font-mono text-[9px] uppercase px-1 py-0.5 leading-none border border-[var(--color-border)] w-max
       ${isGlobal ? 'text-[var(--color-accent-primary)]' : 'text-[var(--color-text-main)]'}`}>
       {scope || 'unknown'}
     </div>
@@ -232,7 +232,7 @@ export default function App() {
                   No {group.title.toLowerCase()} found in registry
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
                   {group.items.map((item) => {
                     const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
                     const isEnabled = activeStatuses.includes(item.status);
@@ -240,33 +240,33 @@ export default function App() {
                     return (
                       <div
                         key={item.id}
-                        className={`group p-2 md:p-2.5 flex flex-col gap-2
+                        className={`group p-1.5 md:p-2 flex flex-col gap-1.5
                           ${isEnabled ? 'brutal-card' : 'brutal-card-disabled'}`}
                       >
-                        <div className="flex flex-col gap-1">
-                          <div className="flex justify-between items-start gap-1.5">
-                            <h3 className="font-bold text-sm md:text-base uppercase tracking-tight break-words" title={item.name || item.title}>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex justify-between items-start gap-1">
+                            <h3 className="font-bold text-sm uppercase tracking-tight break-words leading-tight" title={item.name || item.title}>
                               {item.name || item.title}
                             </h3>
-                            <div className="flex flex-col gap-1 items-end shrink-0">
-                              {item.type && <span className="font-mono text-[9px] bg-[var(--color-surface)] px-1 py-0.5 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase">TYPE: {item.type}</span>}
-                              {item.is_symlink && <span className="font-mono text-[9px] px-1 py-0.5 border border-dashed border-[var(--color-accent-primary)] text-[var(--color-accent-primary)] uppercase">[SYMLINK]</span>}
+                            <div className="flex flex-col gap-0.5 items-end shrink-0">
+                              {item.type && <span className="font-mono text-[8px] leading-none bg-[var(--color-surface)] px-1 py-0.5 border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase">TYPE: {item.type}</span>}
+                              {item.is_symlink && <span className="font-mono text-[8px] leading-none px-1 py-0.5 border border-dashed border-[var(--color-accent-primary)] text-[var(--color-accent-primary)] uppercase">[SYMLINK]</span>}
                             </div>
                           </div>
-                          <p className="font-mono text-[10px] text-[var(--color-text-muted)] break-all leading-tight">
+                          <p className="font-mono text-[9px] text-[var(--color-text-muted)] break-all leading-tight mt-0.5">
                             ID: {item.id}
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-1 flex-wrap mt-0.5">
                           <ScopeBadge scope={item.scope} />
                           <StatusBadge status={item.status} />
                         </div>
 
-                        <div className="flex items-center justify-end mt-0.5 gap-1.5">
+                        <div className="flex items-center justify-end mt-0 gap-1">
                           <button
                             onClick={() => handleToggle(group.type, item.id, isEnabled)}
-                            className={`flex items-center gap-1 px-2 py-1 border font-mono text-[10px] uppercase font-bold transition-all
+                            className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all
                               ${isEnabled
                                 ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
                                 : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
@@ -277,9 +277,9 @@ export default function App() {
                         </div>
 
                         {item.type === 'agent' && item.allowed_skills && (
-                          <div className="mt-2 border-t border-dashed border-[var(--color-border)] pt-2 flex flex-col gap-1.5">
-                            <h4 className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">Available Skills</h4>
-                            <div className="flex flex-wrap gap-1.5">
+                          <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
+                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Available Skills</h4>
+                            <div className="flex flex-wrap gap-1">
                               {data.skills.map((skill) => {
                                 const hasSkill = item.allowed_skills.includes(skill.id);
                                 const toggleKey = `skill-${item.id}-${skill.id}`;
@@ -289,7 +289,7 @@ export default function App() {
                                     key={skill.id}
                                     onClick={() => handleAgentSkillToggle(item.id, skill.id, hasSkill)}
                                     disabled={isLoading}
-                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all flex items-center gap-1 ${
+                                    className={`px-1 py-0.5 font-mono text-[8px] leading-none uppercase border transition-all flex items-center gap-0.5 ${
                                       hasSkill
                                         ? 'border-[var(--color-accent-primary)] text-[var(--color-accent-primary)] bg-[var(--color-accent-primary)]/10'
                                         : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
@@ -305,9 +305,9 @@ export default function App() {
                         )}
 
                         {item.type === 'skill' && item.allowed_targets && (
-                          <div className="mt-2 border-t border-dashed border-[var(--color-border)] pt-2 flex flex-col gap-1.5">
-                            <h4 className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">Allowed Targets</h4>
-                            <div className="flex flex-wrap gap-1.5">
+                          <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
+                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Allowed Targets</h4>
+                            <div className="flex flex-wrap gap-1">
                               {['augment', 'cursor', 'claude-code', 'codex', 'opencode', 'pi', 'gemini'].map((target) => {
                                 const hasTarget = item.allowed_targets.includes(target);
                                 const toggleKey = `target-${item.id}-${target}`;
@@ -317,7 +317,7 @@ export default function App() {
                                     key={target}
                                     onClick={() => handleTargetToggle(item.id, target, hasTarget)}
                                     disabled={isLoading}
-                                    className={`px-1.5 py-0.5 font-mono text-[9px] uppercase border transition-all flex items-center gap-1 ${
+                                    className={`px-1 py-0.5 font-mono text-[8px] leading-none uppercase border transition-all flex items-center gap-0.5 ${
                                       hasTarget
                                         ? 'border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10'
                                         : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
