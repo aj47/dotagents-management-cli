@@ -1275,8 +1275,65 @@ def mutate_command(ctx: AppContext, args: argparse.Namespace, enabled: bool) -> 
     return CommandResult(payload={"scope": scope, "change": payload}, human_text=human_text)
 
 
+def target_permission_command(ctx: AppContext, args: argparse.Namespace, scope: str, allowed: bool) -> CommandResult:
+    if args.target_id not in TARGET_REGISTRY:
+        raise CliError(f"Unknown target `{args.target_id}`.")
+    root = scope_path(ctx, scope)
+    skill_dir = root / "skills" / args.skill_id
+    if not skill_dir.exists():
+        raise CliError(f"Unknown skill `{args.skill_id}`.")
+
+    skill_doc_path = None
+    for name in ("SKILL.md", "skill.md", "README.md"):
+        candidate = skill_dir / name
+        if candidate.exists():
+            skill_doc_path = candidate
+            break
+
+    if not skill_doc_path:
+        raise CliError(f"Skill `{args.skill_id}` missing documentation file.")
+
+    make_backup(root, f"{('allow' if allowed else 'deny')} skill {args.skill_id} for target {args.target_id}", dry_run=args.dry_run)
+
+    if args.dry_run:
+        return CommandResult(
+            payload={"scope": scope, "action": "allow" if allowed else "deny", "type": "skill-target", "id": args.skill_id, "target": args.target_id, "dry_run": True},
+            human_text=f"{'allow' if allowed else 'deny'}ed skill `{args.skill_id}` for target `{args.target_id}` (dry-run)"
+        )
+
+    meta, body = parse_frontmatter(skill_doc_path)
+    allowed_targets = meta.get("allowed_targets")
+
+    if allowed:
+        if allowed_targets is None:
+            pass
+        elif isinstance(allowed_targets, list):
+            if args.target_id not in allowed_targets:
+                allowed_targets.append(args.target_id)
+                meta["allowed_targets"] = allowed_targets
+                write_frontmatter(skill_doc_path, meta, body)
+    else:
+        if allowed_targets is None:
+            allowed_targets = [t for t in TARGET_REGISTRY.keys() if t != args.target_id and t != "dummy"]
+            meta["allowed_targets"] = allowed_targets
+            write_frontmatter(skill_doc_path, meta, body)
+        elif isinstance(allowed_targets, list):
+            if args.target_id in allowed_targets:
+                allowed_targets.remove(args.target_id)
+                meta["allowed_targets"] = allowed_targets
+                write_frontmatter(skill_doc_path, meta, body)
+
+    action = "allow" if allowed else "deny"
+    return CommandResult(
+        payload={"scope": scope, "action": action, "type": "skill-target", "id": args.skill_id, "target": args.target_id},
+        human_text=f"{action}ed skill `{args.skill_id}` for target `{args.target_id}`"
+    )
+
+
 def permission_command(ctx: AppContext, args: argparse.Namespace, allowed: bool) -> CommandResult:
     scope = resolve_write_scope(args, ctx)
+    if getattr(args, "target_id", None):
+        return target_permission_command(ctx, args, scope, allowed)
     root = scope_path(ctx, scope)
     make_backup(root, f"{('allow' if allowed else 'deny')} skill {args.skill_id} for {args.agent_id}", dry_run=args.dry_run)
     payload = mutate_skill_permission(ctx, scope, args.agent_id, args.skill_id, allowed, dry_run=args.dry_run)
@@ -1423,16 +1480,24 @@ def clamp_tui_state(state: TuiState, browser_data: TuiBrowserData) -> None:
     if not browser_data.categories:
         state.selected_category_index = 0
         state.selected_item_index = 0
+        state.selected_inspect_index = 0
         state.focus = "categories"
         return
     state.selected_category_index = min(max(0, state.selected_category_index), len(browser_data.categories) - 1)
     items = browser_data.items_by_category.get(browser_data.categories[state.selected_category_index].key, [])
     if not items:
         state.selected_item_index = 0
-        if state.focus == "items":
+        state.selected_inspect_index = 0
+        if state.focus in {"items", "inspect"}:
             state.focus = "categories"
         return
     state.selected_item_index = min(max(0, state.selected_item_index), len(items) - 1)
+    if state.inspect_items:
+        state.selected_inspect_index = min(max(0, state.selected_inspect_index), len(state.inspect_items) - 1)
+    else:
+        state.selected_inspect_index = 0
+        if state.focus == "inspect":
+            state.focus = "items"
 
 
 def current_tui_category(state: TuiState, browser_data: TuiBrowserData) -> TuiCategory:
@@ -1941,10 +2006,32 @@ def inspect_selected_item(
     category = current_tui_category(state, browser_data)
     item = current_tui_item(state, browser_data)
     if item is None:
+        state.inspect_items = None
         return describe_selected_item(category, item, browser_data)
     if category.key == "agents":
         result = run_command_for_interactive(["show", "agent", item["id"]], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
+        if isinstance(result.payload, dict) and "skills" in result.payload:
+            state.inspect_items = [{"id": s["id"], "available": s["available"], "reason": s["reason"], "type": "skill-permission"} for s in result.payload["skills"]]
         return result.human_text
+    if category.key == "skills":
+        result = run_command_for_interactive(["show", "skill", item["id"]], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
+        inspect_items = []
+        payload_targets = result.payload.get("allowed_targets") if isinstance(result.payload, dict) else None
+
+        for target_id in TARGET_REGISTRY.keys():
+            if target_id == "dummy":
+                continue
+            if payload_targets is None:
+                available = True
+            else:
+                available = target_id in payload_targets
+            inspect_items.append({"id": target_id, "available": available, "reason": "", "type": "skill-target"})
+
+        state.inspect_items = inspect_items
+        lines = [result.human_text, "", "Allowed Targets:"]
+        lines.append(render_table(inspect_items, ["id", "available"]))
+        return "\n".join(lines)
+    state.inspect_items = None
     return describe_selected_item(category, item, browser_data)
 
 
@@ -1988,7 +2075,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     right_width = width - left_width - middle_width - 2
     draw_box(stdscr, pane_top, 0, pane_height, left_width, "Categories", highlighted=state.focus == "categories")
     draw_box(stdscr, pane_top, left_width, pane_height, middle_width, f"{category.label}", highlighted=state.focus == "items")
-    draw_box(stdscr, pane_top, left_width + middle_width, pane_height, right_width, "Detail")
+    draw_box(stdscr, pane_top, left_width + middle_width, pane_height, right_width, "Detail", highlighted=state.focus == "inspect")
     category_visible = max(1, pane_height - 2)
     category_top = min(max(0, state.selected_category_index - category_visible + 1), max(0, len(browser_data.categories) - category_visible))
     for offset, category_entry in enumerate(browser_data.categories[category_top : category_top + category_visible], start=0):
@@ -2005,14 +2092,27 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     else:
         safe_addnstr(stdscr, pane_top + 2, left_width + 2, "No items in this scope.")
     detail_lines = wrap_lines(describe_selected_item(category, item, browser_data), right_width - 3)
-    activity_lines = wrap_lines(state.last_output, right_width - 3)
     detail_space = max(4, (pane_height - 4) // 2)
     for offset, line in enumerate(detail_lines[:detail_space], start=0):
         safe_addnstr(stdscr, pane_top + 1 + offset, left_width + middle_width + 1, line)
-    safe_addnstr(stdscr, pane_top + 1 + detail_space, left_width + middle_width + 1, "Recent activity", curses.A_BOLD)
-    activity_space = max(1, pane_height - detail_space - 4)
-    for offset, line in enumerate(activity_lines[:activity_space], start=0):
-        safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
+
+    if state.focus == "inspect" and state.inspect_items is not None:
+        safe_addnstr(stdscr, pane_top + 1 + detail_space, left_width + middle_width + 1, "Inspect Items", curses.A_BOLD)
+        inspect_space = max(1, pane_height - detail_space - 4)
+        inspect_top = min(max(0, state.selected_inspect_index - inspect_space + 1), max(0, len(state.inspect_items) - inspect_space))
+        for offset, inspect_item in enumerate(state.inspect_items[inspect_top : inspect_top + inspect_space], start=0):
+            index = inspect_top + offset
+            attr = curses.A_REVERSE if index == state.selected_inspect_index else curses.A_NORMAL
+            status = "[ON ]" if inspect_item.get("available") else "[OFF]"
+            row_text = f"{status} {inspect_item['id']} ({inspect_item.get('reason', '')})"
+            row_text = row_text[:right_width - 3]
+            safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, row_text, attr)
+    else:
+        activity_lines = wrap_lines(state.last_output, right_width - 3)
+        safe_addnstr(stdscr, pane_top + 1 + detail_space, left_width + middle_width + 1, "Recent activity", curses.A_BOLD)
+        activity_space = max(1, pane_height - detail_space - 4)
+        for offset, line in enumerate(activity_lines[:activity_space], start=0):
+            safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
     footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  A auto-sync  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
@@ -2046,27 +2146,50 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                 if state.focus == "categories":
                     state.selected_category_index = (state.selected_category_index - 1) % len(browser_data.categories)
                     state.selected_item_index = 0
-                else:
+                elif state.focus == "items":
                     items = current_tui_items(state, browser_data)
                     if items:
                         state.selected_item_index = (state.selected_item_index - 1) % len(items)
+                elif state.focus == "inspect" and state.inspect_items:
+                    state.selected_inspect_index = (state.selected_inspect_index - 1) % len(state.inspect_items)
                 continue
             if key in {curses.KEY_DOWN, ord("j")}:
                 if state.focus == "categories":
                     state.selected_category_index = (state.selected_category_index + 1) % len(browser_data.categories)
                     state.selected_item_index = 0
-                else:
+                elif state.focus == "items":
                     items = current_tui_items(state, browser_data)
                     if items:
                         state.selected_item_index = (state.selected_item_index + 1) % len(items)
+                elif state.focus == "inspect" and state.inspect_items:
+                    state.selected_inspect_index = (state.selected_inspect_index + 1) % len(state.inspect_items)
                 continue
-            if key in {9, curses.KEY_RIGHT, ord("l")}:
-                if current_tui_items(state, browser_data):
-                    state.focus = "items"
-                    state.status_message = f"Browsing {current_tui_category(state, browser_data).label}"
+            if key == 9:
+                if state.focus == "categories":
+                    if current_tui_items(state, browser_data):
+                        state.focus = "items"
+                elif state.focus == "items":
+                    if state.inspect_items:
+                        state.focus = "inspect"
+                    else:
+                        state.focus = "categories"
+                else:
+                    state.focus = "categories"
+                continue
+            if key in {curses.KEY_RIGHT, ord("l")}:
+                if state.focus == "categories":
+                    if current_tui_items(state, browser_data):
+                        state.focus = "items"
+                        state.status_message = f"Browsing {current_tui_category(state, browser_data).label}"
+                elif state.focus == "items" and state.inspect_items:
+                    state.focus = "inspect"
+                    state.status_message = "Browsing detail"
                 continue
             if key in {curses.KEY_LEFT, ord("h")}:
-                state.focus = "categories"
+                if state.focus == "inspect":
+                    state.focus = "items"
+                else:
+                    state.focus = "categories"
                 continue
             if key == ord("p"):
                 category = current_tui_category(state, browser_data)
@@ -2243,6 +2366,34 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                     state.status_message = "No item selected"
                     continue
                 category = current_tui_category(state, browser_data)
+                if state.focus == "inspect" and state.inspect_items:
+                    inspect_item = state.inspect_items[state.selected_inspect_index]
+                    verb = "deny" if inspect_item.get("available") else "allow"
+                    if category.key == "skills":
+                        command_args = [verb, "skill", item["id"], "--target", inspect_item["id"]]
+                    elif category.key == "agents":
+                        command_args = [verb, "skill", inspect_item["id"], "--agent", item["id"]]
+                    else:
+                        command_args = []
+
+                    if command_args:
+                        target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                        if target_scope not in {"global", "workspace"}:
+                            resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                            if not resolved_scope:
+                                state.status_message = "Cancelled"
+                                continue
+                            target_scope = resolved_scope
+                        try:
+                            result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                            state.last_output = result.human_text
+                            state.status_message = f"{verb.title()}ed {inspect_item['id']}"
+                            state.last_output = inspect_selected_item(state, browser_data, ctx=ctx, env=env)
+                        except CliError as exc:
+                            state.last_output = f"Error: {exc}"
+                            state.status_message = "Error"
+                    continue
+
                 command_args = build_toggle_command(category, item)
                 target_scope = preferred_toggle_scope(state.scope, item) or state.scope
                 if is_mutating_command(command_args) and target_scope not in {"global", "workspace"}:
@@ -2256,6 +2407,8 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                     state.last_output = result.human_text
                     state.status_message = f"Toggled {item['id']}"
                     browser_data = build_tui_browser_data(ctx, state.scope)
+                    if state.focus == "inspect":
+                        state.last_output = inspect_selected_item(state, browser_data, ctx=ctx, env=env)
                 except CliError as exc:
                     state.last_output = f"Error: {exc}"
                     state.status_message = "Error"
@@ -2272,6 +2425,9 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
             try:
                 state.last_output = inspect_selected_item(state, browser_data, ctx=ctx, env=env)
                 state.status_message = "Item details loaded"
+                if state.focus == "items" and state.inspect_items:
+                    state.focus = "inspect"
+                    state.selected_inspect_index = 0
             except CliError as exc:
                 state.last_output = f"Error: {exc}"
                 state.status_message = "Error"
@@ -2352,6 +2508,8 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     if command == "get":
         return get_setting_command(ctx, resolve_read_scope(args, ctx), args.key)
     if command == "show":
+        if getattr(args, "show_type", None) == "skill":
+            return show_skill_command(ctx, resolve_read_scope(args, ctx), args.id)
         return show_agent_command(ctx, resolve_read_scope(args, ctx), args.id)
     if command == "doctor":
         return doctor_command(ctx, resolve_read_scope(args, ctx))
