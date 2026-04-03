@@ -8,6 +8,7 @@ from dotagents_management_cli.cli import (
 )
 from pathlib import Path
 import argparse
+import os
 
 app = FastAPI()
 
@@ -138,22 +139,35 @@ def get_resources():
         except Exception:
             pass
 
-        # Scan for synced skills in the target's skills directory
-        synced_skills = []
+        # Scan for symlinked/copied skills in the target's skills directory
+        symlinks = []
         skills_dir_rel = TARGET_SKILLS_DIRS.get(target_id)
         if skills_dir_rel:
             skills_dir = ctx.cwd / skills_dir_rel
             if skills_dir.exists():
                 for item in sorted(skills_dir.iterdir()):
-                    if item.is_dir():
-                        synced_skills.append(item.name)
+                    if item.is_symlink():
+                        target_path = str(item.resolve()) if item.exists() else os.readlink(str(item))
+                        symlinks.append({
+                            "id": item.name,
+                            "is_symlink": True,
+                            "target": target_path,
+                            "broken": not item.exists(),
+                        })
+                    elif item.is_dir():
+                        symlinks.append({
+                            "id": item.name,
+                            "is_symlink": False,
+                            "target": None,
+                            "broken": False,
+                        })
 
         targets.append({
             "id": target_id,
             "name": target_id.replace("-", " ").title(),
             "type": "target",
             "status": "unsynced" if is_unsynced else "synced",
-            "synced_skills": synced_skills,
+            "symlinks": symlinks,
         })
 
     return {
@@ -292,8 +306,11 @@ def remove_synced_skill(target_id: str, skill_id: str):
         raise HTTPException(status_code=400, detail=f"No skills directory for target {target_id}")
 
     skill_path = ctx.cwd / skills_dir_rel / skill_id
-    if not skill_path.exists():
+    if not skill_path.exists() and not skill_path.is_symlink():
         raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found in {target_id}")
 
-    shutil.rmtree(skill_path)
+    if skill_path.is_symlink():
+        skill_path.unlink()
+    else:
+        shutil.rmtree(skill_path)
     return {"status": "success", "target_id": target_id, "skill_id": skill_id}
