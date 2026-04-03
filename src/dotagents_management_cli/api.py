@@ -230,6 +230,28 @@ def mutate_skill_target(skill_id: str, target_id: str, action: str):
         raise HTTPException(status_code=400, detail=str(e))
     return {"status": "success", "action": action, "skill_id": skill_id, "target_id": target_id}
 
+
+@app.post("/api/resources/{resource_type}/{resource_id}/symlink")
+def create_local_symlink(resource_type: str, resource_id: str):
+    import os
+    ctx = build_context()
+
+    plural_type = "memories" if resource_type == "memory" else resource_type + "s"
+
+    global_path = ctx.global_root / plural_type / resource_id
+    local_path = ctx.workspace_root / plural_type / resource_id
+
+    if not global_path.exists():
+        raise HTTPException(status_code=404, detail=f"Global resource not found at {global_path}")
+
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if local_path.exists() or local_path.is_symlink():
+        raise HTTPException(status_code=400, detail=f"Local resource already exists at {local_path}")
+
+    os.symlink(str(global_path), str(local_path))
+
+    return {"status": "success", "resource_type": resource_type, "resource_id": resource_id}
 from dotagents_management_cli.cli import TARGET_REGISTRY
 
 @app.post("/api/sync")

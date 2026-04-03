@@ -692,7 +692,7 @@ def scan_resources_in_scope(scope_name: str, root: Path) -> dict[str, dict[str, 
             if not base_dir.exists():
                 continue
             for item in sorted(base_dir.iterdir()):
-                if not item.is_dir():
+                if not item.is_dir() and not item.is_symlink():
                     continue
                 existing = resources[kind].get(item.name)
                 if existing and state == "disabled":
