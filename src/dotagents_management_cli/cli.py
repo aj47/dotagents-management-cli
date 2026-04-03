@@ -95,10 +95,10 @@ class GenericDirectoryAdapter(AgentAdapter):
         result = {"action": "export", "target": self.target_name, "dry_run": dry_run, "skills_exported": 0, "mcp_exported": False}
 
         target_dir = ctx.cwd / self.dir_name
-        rules_dir = target_dir / "rules"
+        skills_dest_dir = target_dir / "skills"
 
         if not dry_run:
-            ensure_dir(rules_dir)
+            ensure_dir(skills_dest_dir)
 
         skills = collect_resources(ctx, scope)["skills"]
         for skill in skills:
@@ -117,15 +117,16 @@ class GenericDirectoryAdapter(AgentAdapter):
                             break
                     except CliError:
                         pass
-                    skill_doc = candidate.read_text(encoding="utf-8")
+                    skill_doc = candidate
                     break
             if skill_doc is None:
                 continue
 
-            rule_path = rules_dir / f"{skill['id']}.{self.rule_ext}"
-            content = f"---\ndescription: Skill {skill['id']}\nglobs: *\n---\n{skill_doc.strip()}\n"
+            target_skill_dir = skills_dest_dir / skill["id"]
             if not dry_run:
-                atomic_write_text(rule_path, content)
+                if target_skill_dir.exists():
+                    shutil.rmtree(target_skill_dir)
+                shutil.copytree(skill_dir, target_skill_dir, symlinks=True)
             result["skills_exported"] += 1
 
         path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
@@ -140,11 +141,26 @@ class GenericDirectoryAdapter(AgentAdapter):
     def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
         result = {"action": "import", "target": self.target_name, "dry_run": dry_run, "skills_imported": 0, "mcp_imported": False}
         target_dir = ctx.cwd / self.dir_name
-        rules_dir = target_dir / "rules"
+        skills_dest_dir = target_dir / "skills"
 
         scope_dir = scope_path(ctx, scope)
         skills_dir = scope_dir / "skills"
 
+        if skills_dest_dir.exists():
+            for item in skills_dest_dir.iterdir():
+                if not item.is_dir():
+                    continue
+                skill_id = item.name
+                skill_path = skills_dir / skill_id
+                if not dry_run:
+                    if skill_path.exists():
+                        shutil.rmtree(skill_path)
+                    else:
+                        ensure_dir(skill_path.parent)
+                    shutil.copytree(item, skill_path, symlinks=True)
+                result["skills_imported"] += 1
+
+        rules_dir = target_dir / "rules"
         if rules_dir.exists():
             for rule_file in rules_dir.glob(f"*.{self.rule_ext}"):
                 rule_id = rule_file.stem
@@ -154,20 +170,26 @@ class GenericDirectoryAdapter(AgentAdapter):
                     if end != -1:
                         content = content[end + 5:]
 
-                skill_path = skills_dir / rule_id / "SKILL.md"
+                skill_path = skills_dir / rule_id
+                skill_md_path = skill_path / "SKILL.md"
                 if not dry_run:
-                    ensure_dir(skill_path.parent)
-                    atomic_write_text(skill_path, content.strip() + "\n")
-                result["skills_imported"] += 1
+                    ensure_dir(skill_path)
+                    if not skill_md_path.exists():
+                        atomic_write_text(skill_md_path, content.strip() + "\n")
+                if dry_run or not skill_md_path.exists():
+                    result["skills_imported"] += 1
 
         rules_file = ctx.cwd / f"{self.dir_name}rules"
         if rules_file.exists():
             content = rules_file.read_text(encoding="utf-8")
-            skill_path = skills_dir / f"{self.dir_name[1:]}rules" / "SKILL.md"
+            skill_path = skills_dir / f"{self.dir_name[1:]}rules"
+            skill_md_path = skill_path / "SKILL.md"
             if not dry_run:
-                ensure_dir(skill_path.parent)
-                atomic_write_text(skill_path, content.strip() + "\n")
-            result["skills_imported"] += 1
+                ensure_dir(skill_path)
+                if not skill_md_path.exists():
+                    atomic_write_text(skill_md_path, content.strip() + "\n")
+            if dry_run or not skill_md_path.exists():
+                result["skills_imported"] += 1
 
         mcp_file = target_dir / "mcp.json"
         if mcp_file.exists():
@@ -242,6 +264,42 @@ class GeminiAdapter(GenericDirectoryAdapter):
 class ClaudeCodeAdapter(AgentAdapter):
     def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
         result = {"action": "export", "target": "claude-code", "dry_run": dry_run, "skills_exported": 0, "mcp_exported": False}
+
+        target_dir = ctx.cwd / ".claude"
+        skills_dest_dir = target_dir / "skills"
+
+        if not dry_run:
+            ensure_dir(skills_dest_dir)
+
+        skills = collect_resources(ctx, scope)["skills"]
+        for skill in skills:
+            if skill["current_state"] != "present":
+                continue
+            skill_dir = Path(skill["source_path"])
+            skill_doc = None
+            for name in ("SKILL.md", "skill.md", "README.md"):
+                candidate = skill_dir / name
+                if candidate.exists():
+                    try:
+                        meta, _ = parse_frontmatter(candidate)
+                        allowed_targets = meta.get("allowed_targets")
+                        if isinstance(allowed_targets, list) and "claude-code" not in allowed_targets:
+                            skill_doc = None
+                            break
+                    except CliError:
+                        pass
+                    skill_doc = candidate
+                    break
+            if skill_doc is None:
+                continue
+
+            target_skill_dir = skills_dest_dir / skill["id"]
+            if not dry_run:
+                if target_skill_dir.exists():
+                    shutil.rmtree(target_skill_dir)
+                shutil.copytree(skill_dir, target_skill_dir, symlinks=True)
+            result["skills_exported"] += 1
+
         path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
         if mcp_config:
             mcp_dest = ctx.cwd / "claude.json"
@@ -254,6 +312,26 @@ class ClaudeCodeAdapter(AgentAdapter):
 
     def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
         result = {"action": "import", "target": "claude-code", "dry_run": dry_run, "skills_imported": 0, "mcp_imported": False}
+        target_dir = ctx.cwd / ".claude"
+        skills_dest_dir = target_dir / "skills"
+
+        scope_dir = scope_path(ctx, scope)
+        skills_dir = scope_dir / "skills"
+
+        if skills_dest_dir.exists():
+            for item in skills_dest_dir.iterdir():
+                if not item.is_dir():
+                    continue
+                skill_id = item.name
+                skill_path = skills_dir / skill_id
+                if not dry_run:
+                    if skill_path.exists():
+                        shutil.rmtree(skill_path)
+                    else:
+                        ensure_dir(skill_path.parent)
+                    shutil.copytree(item, skill_path, symlinks=True)
+                result["skills_imported"] += 1
+
         mcp_file = ctx.cwd / "claude.json"
         if mcp_file.exists():
             try:
@@ -279,6 +357,10 @@ class ClaudeCodeAdapter(AgentAdapter):
 
         mcp_dest = ctx.cwd / "claude.json"
         target_mtime = get_tree_mtime(mcp_dest)
+
+        target_skills = ctx.cwd / ".claude" / "skills"
+        if target_skills.exists():
+            target_mtime = max(target_mtime, get_tree_mtime(target_skills))
 
         return source_mtime > 0 and source_mtime > target_mtime
 

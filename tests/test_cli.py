@@ -162,11 +162,10 @@ class DotagentsCliTests(unittest.TestCase):
         push_result = self.run_cli("--workspace", "sync", "--target", "cursor", "--push")
         self.assertIn("Syncing", push_result.human_text)
         cursor_dir = self.workspace / ".cursor"
-        self.assertTrue((cursor_dir / "rules" / "writer.mdc").exists())
+        self.assertTrue((cursor_dir / "skills" / "writer" / "SKILL.md").exists())
         self.assertTrue((cursor_dir / "mcp.json").exists())
-        mdc_content = (cursor_dir / "rules" / "writer.mdc").read_text(encoding="utf-8")
-        self.assertIn("description: Skill writer", mdc_content)
-        self.assertIn("# writer", mdc_content)
+        skill_content = (cursor_dir / "skills" / "writer" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("# writer", skill_content)
 
         # Pull from cursor
         write(cursor_dir / "rules" / "new_skill.mdc", "---\ndescription: test\nglobs: *\n---\n# new rule")
