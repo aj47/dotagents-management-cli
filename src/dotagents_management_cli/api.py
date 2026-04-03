@@ -26,6 +26,7 @@ TARGET_SKILLS_DIRS = {
     "opencode": ".opencode/skills",
     "pi": ".pi/skills",
     "gemini": ".gemini/skills",
+    "dotagents": ".agents/skills",
 }
 
 
