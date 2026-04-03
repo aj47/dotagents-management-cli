@@ -84,6 +84,7 @@ def get_resources():
             "id": t["id"],
             "title": t["id"].replace("-", " ").title(),
             "scope": t["scope"],
+            "type": "task",
             "status": "in_progress" if t["current_state"] == "present" else "not_started",
             "agent": None,
             "is_symlink": t.get("is_symlink", False)
@@ -96,6 +97,7 @@ def get_resources():
             "name": m["id"].replace("-", " ").title(),
             "size": "? KB",
             "scope": m["scope"],
+            "type": "memory",
             "status": "active" if m["current_state"] == "present" else "archived",
             "is_symlink": m.get("is_symlink", False)
         })
@@ -109,6 +111,7 @@ def get_resources():
             "id": m["id"],
             "name": m["id"],
             "scope": m["scope"],
+            "type": "mcp-server",
             "status": "connected" if m["current_state"] == "present" else "disconnected",
             "is_symlink": False
         })
