@@ -18,6 +18,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+TARGET_SKILLS_DIRS = {
+    "augment": ".augment/skills",
+    "cursor": ".cursor/skills",
+    "claude-code": ".claude/skills",
+    "codex": ".codex/skills",
+    "opencode": ".opencode/skills",
+    "pi": ".pi/skills",
+    "gemini": ".gemini/skills",
+}
+
+
 @app.get("/api/resources")
 def get_resources():
     ctx = build_context()
@@ -127,11 +138,22 @@ def get_resources():
         except Exception:
             pass
 
+        # Scan for synced skills in the target's skills directory
+        synced_skills = []
+        skills_dir_rel = TARGET_SKILLS_DIRS.get(target_id)
+        if skills_dir_rel:
+            skills_dir = ctx.cwd / skills_dir_rel
+            if skills_dir.exists():
+                for item in sorted(skills_dir.iterdir()):
+                    if item.is_dir():
+                        synced_skills.append(item.name)
+
         targets.append({
             "id": target_id,
             "name": target_id.replace("-", " ").title(),
             "type": "target",
             "status": "unsynced" if is_unsynced else "synced",
+            "synced_skills": synced_skills,
         })
 
     return {
@@ -231,29 +253,6 @@ def mutate_skill_target(skill_id: str, target_id: str, action: str):
     return {"status": "success", "action": action, "skill_id": skill_id, "target_id": target_id}
 
 
-@app.post("/api/resources/{resource_type}/{resource_id}/symlink")
-def create_local_symlink(resource_type: str, resource_id: str):
-    import os
-    ctx = build_context()
-
-    plural_type = "memories" if resource_type == "memory" else resource_type + "s"
-
-    global_path = ctx.global_root / plural_type / resource_id
-    local_path = ctx.workspace_root / plural_type / resource_id
-
-    if not global_path.exists():
-        raise HTTPException(status_code=404, detail=f"Global resource not found at {global_path}")
-
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if local_path.exists() or local_path.is_symlink():
-        raise HTTPException(status_code=400, detail=f"Local resource already exists at {local_path}")
-
-    os.symlink(str(global_path), str(local_path))
-
-    return {"status": "success", "resource_type": resource_type, "resource_id": resource_id}
-from dotagents_management_cli.cli import TARGET_REGISTRY
-
 @app.post("/api/sync")
 def sync_all():
     ctx = build_context()
@@ -279,3 +278,22 @@ def sync_target(target_id: str):
         return {"status": "success", "target_id": target_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/targets/{target_id}/skills/{skill_id}")
+def remove_synced_skill(target_id: str, skill_id: str):
+    import shutil
+    if target_id not in TARGET_REGISTRY or target_id == "dummy":
+        raise HTTPException(status_code=400, detail=f"Unknown target {target_id}")
+
+    ctx = build_context()
+    skills_dir_rel = TARGET_SKILLS_DIRS.get(target_id)
+    if not skills_dir_rel:
+        raise HTTPException(status_code=400, detail=f"No skills directory for target {target_id}")
+
+    skill_path = ctx.cwd / skills_dir_rel / skill_id
+    if not skill_path.exists():
+        raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found in {target_id}")
+
+    shutil.rmtree(skill_path)
+    return {"status": "success", "target_id": target_id, "skill_id": skill_id}
