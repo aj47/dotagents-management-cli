@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, Terminal, Cpu, Database, Zap, BookOpen, Layers, Activity, RefreshCw, Link } from 'lucide-react';
+import { Power, Terminal, Cpu, Database, BookOpen, Layers, Activity, RefreshCw, Link } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
@@ -109,6 +109,21 @@ export default function App() {
     }
   };
 
+  const handleSyncTarget = async (targetId: string) => {
+    const toggleKey = `sync-${targetId}`;
+    if (loadingToggles[toggleKey]) return;
+    setLoadingToggles(prev => ({ ...prev, [toggleKey]: true }));
+    try {
+      await fetch(`/api/sync/${targetId}`, { method: 'POST' });
+      const r = await fetch('/api/resources');
+      setData(await r.json());
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setLoadingToggles(prev => ({ ...prev, [toggleKey]: false }));
+    }
+  };
+
   const handleSync = async () => {
     setSyncing(true);
     try {
@@ -130,21 +145,13 @@ export default function App() {
 
   if (!data) return <div className="p-8 text-[var(--color-text-main)] font-mono animate-pulse">Initializing Control Plane...</div>;
 
-  const symlinkItems = [
-    ...(data.skills || []),
-    ...(data.agents || []),
-    ...(data.tasks || []),
-    ...(data.mcpServers || []),
-    ...(data.memories || [])
-  ].filter(item => item.is_symlink);
-
   const resourceGroups = [
     { key: 'skills', title: 'Skills', icon: BookOpen, items: data.skills, type: 'skill' },
     { key: 'agents', title: 'Agents', icon: Cpu, items: data.agents, type: 'agent' },
     { key: 'tasks', title: 'Tasks', icon: Activity, items: data.tasks, type: 'task' },
     { key: 'mcpServers', title: 'MCP Servers', icon: Terminal, items: data.mcpServers, type: 'mcp-server' },
     { key: 'memories', title: 'Memories', icon: Database, items: data.memories, type: 'memory' },
-    { key: 'symlinks', title: 'Symlinks', icon: Link, items: symlinkItems, type: 'mixed' }
+    { key: 'targets', title: 'Sync Targets', icon: Link, items: data.targets || [], type: 'target' }
   ];
 
   return (
@@ -161,27 +168,7 @@ export default function App() {
           </h1>
         </div>
 
-        <div className="flex flex-col md:items-end gap-3">
-          <div className="flex flex-wrap gap-1.5 font-mono text-[10px] md:text-xs uppercase">
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className={`border px-2 py-1 flex items-center gap-1.5 font-bold transition-all
-                ${syncing
-                  ? 'border-[var(--color-text-muted)] text-[var(--color-text-muted)]'
-                  : 'border-[var(--color-accent-secondary)] text-[var(--color-base)] bg-[var(--color-accent-secondary)] hover:bg-transparent hover:text-[var(--color-accent-secondary)]'}`}
-            >
-              <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
-              {syncing ? 'Syncing...' : 'Sync Now'}
-            </button>
-            <div className="border border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] px-2 py-1 flex items-center gap-1.5 font-bold bg-[var(--color-accent-secondary)]/10">
-              <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" /> System Online
-            </div>
-            <div className="border border-[var(--color-border)] px-2 py-1 bg-[var(--color-text-main)] text-[var(--color-base)] font-bold flex items-center gap-1.5">
-              <Zap size={12} /> Master Override
-            </div>
-          </div>
-        </div>
+
       </header>
 
       {/* Tabs */}
@@ -206,7 +193,7 @@ export default function App() {
 
       <div className="flex flex-col gap-6">
         <AnimatePresence mode="popLayout">
-          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'symlinks')).map((group) => (
+          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'targets')).map((group) => (
             <motion.div
               key={group.key}
               initial={{ opacity: 0, y: 10 }}
@@ -221,18 +208,34 @@ export default function App() {
                 </h2>
                 {group.items.length > 0 && (
                   <div className="flex gap-1.5">
-                    <button
-                      onClick={() => handleToggleAll(group.type, group.items, true)}
-                      className="px-2 py-0.5 border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] font-mono text-[10px] uppercase hover:border-solid hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] transition-colors"
-                    >
-                      Enable All
-                    </button>
-                    <button
-                      onClick={() => handleToggleAll(group.type, group.items, false)}
-                      className="px-2 py-0.5 border border-[var(--color-text-muted)] text-[var(--color-text-main)] font-mono text-[10px] uppercase hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)] transition-colors"
-                    >
-                      Disable All
-                    </button>
+                    {group.key === 'targets' ? (
+                      <button
+                        onClick={handleSync}
+                        disabled={syncing}
+                        className={`border px-2 py-0.5 flex items-center gap-1.5 font-mono text-[10px] uppercase transition-all
+                          ${syncing
+                            ? 'border-[var(--color-text-muted)] text-[var(--color-text-muted)]'
+                            : 'border-[var(--color-accent-secondary)] text-[var(--color-base)] bg-[var(--color-accent-secondary)] hover:bg-transparent hover:text-[var(--color-accent-secondary)]'}`}
+                      >
+                        <RefreshCw size={10} className={syncing ? "animate-spin" : ""} />
+                        {syncing ? 'Syncing...' : 'Sync All'}
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleToggleAll(group.type, group.items, true)}
+                          className="px-2 py-0.5 border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] font-mono text-[10px] uppercase hover:border-solid hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] transition-colors"
+                        >
+                          Enable All
+                        </button>
+                        <button
+                          onClick={() => handleToggleAll(group.type, group.items, false)}
+                          className="px-2 py-0.5 border border-[var(--color-text-muted)] text-[var(--color-text-main)] font-mono text-[10px] uppercase hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)] transition-colors"
+                        >
+                          Disable All
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -273,16 +276,27 @@ export default function App() {
                             <ScopeBadge scope={item.scope} />
                             <StatusBadge status={item.status} />
                           </div>
-                          <button
-                            onClick={() => handleToggle(item.type || group.type, item.id, isEnabled)}
-                            className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0
-                              ${isEnabled
-                                ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
-                                : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
-                          >
-                            <Power size={12} />
-                            {isEnabled ? 'Disable' : 'Enable'}
-                          </button>
+                          {item.type === 'target' ? (
+                            <button
+                              onClick={() => handleSyncTarget(item.id)}
+                              disabled={loadingToggles[`sync-${item.id}`]}
+                              className="flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0 border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] hover:bg-[var(--color-accent-secondary)] hover:text-[var(--color-base)] disabled:opacity-50"
+                            >
+                              <RefreshCw size={12} className={loadingToggles[`sync-${item.id}`] ? "animate-spin" : ""} />
+                              Sync
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleToggle(item.type || group.type, item.id, isEnabled)}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0
+                                ${isEnabled
+                                  ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
+                                  : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
+                            >
+                              <Power size={12} />
+                              {isEnabled ? 'Disable' : 'Enable'}
+                            </button>
+                          )}
                         </div>
 
                         {item.type === 'agent' && item.allowed_skills && (
@@ -337,6 +351,22 @@ export default function App() {
                                   </button>
                                 );
                               })}
+                            </div>
+                          </div>
+                        )}
+
+                        {item.type === 'target' && (
+                          <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
+                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Configured Skills</h4>
+                            <div className="flex flex-wrap gap-1">
+                              {data.skills.filter(s => s.allowed_targets?.includes(item.id)).map((skill) => (
+                                <span key={skill.id} className="px-1 py-0.5 font-mono text-[8px] leading-none uppercase border border-[var(--color-text-muted)] text-[var(--color-text-muted)]">
+                                  {skill.id}
+                                </span>
+                              ))}
+                              {data.skills.filter(s => s.allowed_targets?.includes(item.id)).length === 0 && (
+                                <span className="font-mono text-[8px] text-[var(--color-text-muted)] italic">No skills</span>
+                              )}
                             </div>
                           </div>
                         )}
