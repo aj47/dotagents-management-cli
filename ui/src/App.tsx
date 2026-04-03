@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, Terminal, Cpu, Database, BookOpen, Layers, Activity, RefreshCw, Link, Zap, ExternalLink } from 'lucide-react';
+import { Power, Terminal, Cpu, Database, BookOpen, Layers, Activity, RefreshCw, Link, X } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
@@ -37,7 +37,7 @@ export default function App() {
     targets: any[];
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'targets' | 'symlinks'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'harnesses'>('all');
   const [syncing, setSyncing] = useState(false);
   const [loadingToggles, setLoadingToggles] = useState<Record<string, boolean>>({});
 
@@ -136,6 +136,21 @@ export default function App() {
     setSyncing(false);
   };
 
+  const handleRemoveSyncedSkill = async (targetId: string, skillId: string) => {
+    const toggleKey = `remove-synced-${targetId}-${skillId}`;
+    if (loadingToggles[toggleKey]) return;
+    setLoadingToggles(prev => ({ ...prev, [toggleKey]: true }));
+    try {
+      await fetch(`/api/targets/${targetId}/skills/${skillId}`, { method: 'DELETE' });
+      const r = await fetch('/api/resources');
+      setData(await r.json());
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setLoadingToggles(prev => ({ ...prev, [toggleKey]: false }));
+    }
+  };
+
   useEffect(() => {
     fetch('/api/resources')
       .then(res => res.json())
@@ -151,19 +166,10 @@ export default function App() {
     { key: 'tasks', title: 'Tasks', icon: Activity, items: (data.tasks || []).map(i => ({ ...i, type: i.type || 'task' })), type: 'task' },
     { key: 'mcpServers', title: 'MCP Servers', icon: Terminal, items: (data.mcpServers || []).map(i => ({ ...i, type: i.type || 'mcp-server' })), type: 'mcp-server' },
     { key: 'memories', title: 'Memories', icon: Database, items: (data.memories || []).map(i => ({ ...i, type: i.type || 'memory' })), type: 'memory' },
-    { key: 'targets', title: 'Sync Targets', icon: Link, items: (data.targets || []).map(i => ({ ...i, type: i.type || 'target' })), type: 'target' }
+    { key: 'harnesses', title: 'Harnesses', icon: Link, items: (data.targets || []).map(i => ({ ...i, type: i.type || 'target' })), type: 'target' }
   ];
 
-  const resourceGroups = [
-    ...baseResourceGroups,
-    {
-      key: 'symlinks',
-      title: 'Local Symlinks',
-      icon: ExternalLink,
-      items: baseResourceGroups.filter(g => g.key !== 'targets').flatMap(g => g.items.filter(i => i.is_symlink)),
-      type: 'mixed'
-    }
-  ];
+  const resourceGroups = baseResourceGroups;
 
   return (
     <div className="min-h-screen bg-[var(--color-base)] text-[var(--color-text-main)] p-2 md:p-4 lg:p-6 overflow-x-hidden selection:bg-[var(--color-accent-primary)] selection:text-white">
@@ -179,27 +185,7 @@ export default function App() {
           </h1>
         </div>
 
-        <div className="flex flex-col md:items-end gap-3">
-          <div className="flex flex-wrap gap-1.5 font-mono text-[10px] md:text-xs uppercase">
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className={`border px-2 py-1 flex items-center gap-1.5 font-bold transition-all
-                ${syncing
-                  ? 'border-[var(--color-text-muted)] text-[var(--color-text-muted)]'
-                  : 'border-[var(--color-accent-secondary)] text-[var(--color-base)] bg-[var(--color-accent-secondary)] hover:bg-transparent hover:text-[var(--color-accent-secondary)]'}`}
-            >
-              <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
-              {syncing ? 'Syncing...' : 'Sync Now'}
-            </button>
-            <div className="border border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] px-2 py-1 flex items-center gap-1.5 font-bold bg-[var(--color-accent-secondary)]/10">
-              <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" /> System Online
-            </div>
-            <div className="border border-[var(--color-border)] px-2 py-1 bg-[var(--color-text-main)] text-[var(--color-base)] font-bold flex items-center gap-1.5">
-              <Zap size={12} /> Master Override
-            </div>
-          </div>
-        </div>
+
       </header>
 
       {/* Tabs */}
@@ -224,7 +210,7 @@ export default function App() {
 
       <div className="flex flex-col gap-6">
         <AnimatePresence mode="popLayout">
-          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'targets' && g.key !== 'symlinks')).map((group) => (
+          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'harnesses')).map((group) => (
             <motion.div
               key={group.key}
               initial={{ opacity: 0, y: 10 }}
@@ -237,9 +223,9 @@ export default function App() {
                   <group.icon size={18} className="text-[var(--color-accent-primary)]" />
                   {group.title}
                 </h2>
-                {group.items.length > 0 && (
+                {(group.items.length > 0 || group.key === 'harnesses') && (
                   <div className="flex gap-1.5">
-                    {group.key === 'targets' ? (
+                    {group.key === 'harnesses' ? (
                       <button
                         onClick={handleSync}
                         disabled={syncing}
@@ -317,16 +303,18 @@ export default function App() {
                               Sync
                             </button>
                           ) : (
-                            <button
-                              onClick={() => handleToggle(item.type || group.type, item.id, isEnabled)}
-                              className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0
-                                ${isEnabled
-                                  ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
-                                  : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
-                            >
-                              <Power size={12} />
-                              {isEnabled ? 'Disable' : 'Enable'}
-                            </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleToggle(item.type || group.type, item.id, isEnabled)}
+                                className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0
+                                  ${isEnabled
+                                    ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
+                                    : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-secondary)] hover:text-[var(--color-accent-secondary)] hover:border-solid'}`}
+                              >
+                                <Power size={12} />
+                                {isEnabled ? 'Disable' : 'Enable'}
+                              </button>
+                            </div>
                           )}
                         </div>
 
@@ -360,7 +348,7 @@ export default function App() {
 
                         {item.type === 'skill' && item.allowed_targets && (
                           <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
-                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Allowed Targets</h4>
+                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Allowed Harnesses</h4>
                             <div className="flex flex-wrap gap-1">
                               {['augment', 'cursor', 'claude-code', 'codex', 'opencode', 'pi', 'gemini'].map((target) => {
                                 const hasTarget = item.allowed_targets.includes(target);
@@ -388,15 +376,56 @@ export default function App() {
 
                         {item.type === 'target' && (
                           <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
-                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Configured Skills</h4>
+                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Skills</h4>
                             <div className="flex flex-wrap gap-1">
-                              {data.skills.filter(s => s.allowed_targets?.includes(item.id)).map((skill) => (
-                                <span key={skill.id} className="px-1 py-0.5 font-mono text-[8px] leading-none uppercase border border-[var(--color-text-muted)] text-[var(--color-text-muted)]">
-                                  {skill.id}
-                                </span>
-                              ))}
-                              {data.skills.filter(s => s.allowed_targets?.includes(item.id)).length === 0 && (
-                                <span className="font-mono text-[8px] text-[var(--color-text-muted)] italic">No skills</span>
+                              {data.skills.map((skill) => {
+                                const isAllowed = skill.allowed_targets?.includes(item.id);
+                                const toggleKey = `target-${skill.id}-${item.id}`;
+                                const isLoading = loadingToggles[toggleKey];
+                                return (
+                                  <button
+                                    key={skill.id}
+                                    onClick={() => handleTargetToggle(skill.id, item.id, isAllowed)}
+                                    disabled={isLoading}
+                                    className={`px-1 py-0.5 font-mono text-[8px] leading-none uppercase border transition-all flex items-center gap-0.5 ${
+                                      isAllowed
+                                        ? 'border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10'
+                                        : 'border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] opacity-50 hover:opacity-100 hover:border-solid hover:border-[var(--color-text-main)]'
+                                    } ${isLoading ? '!opacity-50 cursor-wait' : ''}`}
+                                  >
+                                    {isLoading && <RefreshCw size={8} className="animate-spin" />}
+                                    {skill.id}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {item.type === 'target' && (
+                          <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
+                            <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Synced Skills</h4>
+                            <div className="flex flex-wrap gap-1">
+                              {(item.synced_skills || []).length === 0 ? (
+                                <span className="font-mono text-[8px] text-[var(--color-text-muted)] italic">No synced skills</span>
+                              ) : (
+                                (item.synced_skills || []).map((skillId: string) => {
+                                  const toggleKey = `remove-synced-${item.id}-${skillId}`;
+                                  const isLoading = loadingToggles[toggleKey];
+                                  return (
+                                    <span key={skillId} className="px-1 py-0.5 font-mono text-[8px] leading-none uppercase border border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] bg-[var(--color-accent-secondary)]/10 flex items-center gap-0.5">
+                                      {skillId}
+                                      <button
+                                        onClick={() => handleRemoveSyncedSkill(item.id, skillId)}
+                                        disabled={isLoading}
+                                        className="hover:text-[var(--color-accent-primary)] transition-colors disabled:opacity-50"
+                                        title={`Remove ${skillId} from ${item.id}`}
+                                      >
+                                        {isLoading ? <RefreshCw size={8} className="animate-spin" /> : <X size={8} />}
+                                      </button>
+                                    </span>
+                                  );
+                                })
                               )}
                             </div>
                           </div>

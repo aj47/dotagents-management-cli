@@ -100,6 +100,7 @@ class GenericDirectoryAdapter(AgentAdapter):
         if not dry_run:
             ensure_dir(skills_dest_dir)
 
+        exported_skill_ids = set()
         skills = collect_resources(ctx, scope)["skills"]
         for skill in skills:
             if skill["current_state"] != "present":
@@ -123,11 +124,20 @@ class GenericDirectoryAdapter(AgentAdapter):
                 continue
 
             target_skill_dir = skills_dest_dir / skill["id"]
+            exported_skill_ids.add(skill["id"])
             if not dry_run:
                 if target_skill_dir.exists():
                     shutil.rmtree(target_skill_dir)
                 shutil.copytree(skill_dir, target_skill_dir, symlinks=True)
             result["skills_exported"] += 1
+
+        # Remove skills that are no longer allowed for this target
+        if not dry_run and skills_dest_dir.exists():
+            for item in skills_dest_dir.iterdir():
+                if item.is_dir() and item.name not in exported_skill_ids:
+                    shutil.rmtree(item)
+                    result.setdefault("skills_removed", 0)
+                    result["skills_removed"] += 1
 
         path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
         if mcp_config:
@@ -271,6 +281,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         if not dry_run:
             ensure_dir(skills_dest_dir)
 
+        exported_skill_ids = set()
         skills = collect_resources(ctx, scope)["skills"]
         for skill in skills:
             if skill["current_state"] != "present":
@@ -294,11 +305,20 @@ class ClaudeCodeAdapter(AgentAdapter):
                 continue
 
             target_skill_dir = skills_dest_dir / skill["id"]
+            exported_skill_ids.add(skill["id"])
             if not dry_run:
                 if target_skill_dir.exists():
                     shutil.rmtree(target_skill_dir)
                 shutil.copytree(skill_dir, target_skill_dir, symlinks=True)
             result["skills_exported"] += 1
+
+        # Remove skills that are no longer allowed for this target
+        if not dry_run and skills_dest_dir.exists():
+            for item in skills_dest_dir.iterdir():
+                if item.is_dir() and item.name not in exported_skill_ids:
+                    shutil.rmtree(item)
+                    result.setdefault("skills_removed", 0)
+                    result["skills_removed"] += 1
 
         path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
         if mcp_config:
