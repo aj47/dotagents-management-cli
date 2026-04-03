@@ -116,12 +116,31 @@ def get_resources():
             "is_symlink": False
         })
 
+    targets = []
+    for target_id, adapter_cls in TARGET_REGISTRY.items():
+        if target_id == "dummy":
+            continue
+        adapter = adapter_cls()
+        is_unsynced = False
+        try:
+            is_unsynced = adapter.check_drift(ctx, "effective")
+        except Exception:
+            pass
+
+        targets.append({
+            "id": target_id,
+            "name": target_id.replace("-", " ").title(),
+            "type": "target",
+            "status": "unsynced" if is_unsynced else "synced",
+        })
+
     return {
         "agents": agents,
         "skills": skills,
         "tasks": tasks,
         "mcpServers": mcp_servers,
-        "memories": memories
+        "memories": memories,
+        "targets": targets
     }
 
 from fastapi import HTTPException
@@ -224,3 +243,17 @@ def sync_all():
         except Exception as e:
             results[target_id] = str(e)
     return {"status": "success", "results": results}
+
+
+@app.post("/api/sync/{target_id}")
+def sync_target(target_id: str):
+    if target_id not in TARGET_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown target {target_id}")
+
+    ctx = build_context()
+    try:
+        adapter = TARGET_REGISTRY[target_id]()
+        adapter.export_to_target(ctx, "workspace", False)
+        return {"status": "success", "target_id": target_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

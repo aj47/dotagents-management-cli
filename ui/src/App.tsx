@@ -34,9 +34,10 @@ export default function App() {
     tasks: any[];
     mcpServers: any[];
     memories: any[];
+    targets: any[];
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'symlinks'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'targets'>('all');
   const [syncing, setSyncing] = useState(false);
   const [loadingToggles, setLoadingToggles] = useState<Record<string, boolean>>({});
 
