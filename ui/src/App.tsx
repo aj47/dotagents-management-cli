@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, Terminal, Cpu, Database, BookOpen, Layers, Activity, RefreshCw, Link } from 'lucide-react';
+import { Power, Terminal, Cpu, Database, BookOpen, Layers, Activity, RefreshCw, Link, Zap, ExternalLink } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
@@ -37,7 +37,7 @@ export default function App() {
     targets: any[];
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'targets'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'targets' | 'symlinks'>('all');
   const [syncing, setSyncing] = useState(false);
   const [loadingToggles, setLoadingToggles] = useState<Record<string, boolean>>({});
 
@@ -168,7 +168,27 @@ export default function App() {
           </h1>
         </div>
 
-
+        <div className="flex flex-col md:items-end gap-3">
+          <div className="flex flex-wrap gap-1.5 font-mono text-[10px] md:text-xs uppercase">
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className={`border px-2 py-1 flex items-center gap-1.5 font-bold transition-all
+                ${syncing
+                  ? 'border-[var(--color-text-muted)] text-[var(--color-text-muted)]'
+                  : 'border-[var(--color-accent-secondary)] text-[var(--color-base)] bg-[var(--color-accent-secondary)] hover:bg-transparent hover:text-[var(--color-accent-secondary)]'}`}
+            >
+              <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
+              {syncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+            <div className="border border-[var(--color-accent-secondary)] text-[var(--color-accent-secondary)] px-2 py-1 flex items-center gap-1.5 font-bold bg-[var(--color-accent-secondary)]/10">
+              <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" /> System Online
+            </div>
+            <div className="border border-[var(--color-border)] px-2 py-1 bg-[var(--color-text-main)] text-[var(--color-base)] font-bold flex items-center gap-1.5">
+              <Zap size={12} /> Master Override
+            </div>
+          </div>
+        </div>
       </header>
 
       {/* Tabs */}
