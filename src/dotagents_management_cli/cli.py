@@ -124,11 +124,9 @@ class GenericDirectoryAdapter(AgentAdapter):
 
             target_skill_dir = skills_dest_dir / skill["id"]
             if not dry_run:
-                if target_skill_dir.is_symlink():
-                    target_skill_dir.unlink()
-                elif target_skill_dir.exists():
+                if target_skill_dir.exists():
                     shutil.rmtree(target_skill_dir)
-                os.symlink(str(skill_dir.resolve()), str(target_skill_dir))
+                shutil.copytree(skill_dir, target_skill_dir, symlinks=True)
             result["skills_exported"] += 1
 
         path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
@@ -297,11 +295,9 @@ class ClaudeCodeAdapter(AgentAdapter):
 
             target_skill_dir = skills_dest_dir / skill["id"]
             if not dry_run:
-                if target_skill_dir.is_symlink():
-                    target_skill_dir.unlink()
-                elif target_skill_dir.exists():
+                if target_skill_dir.exists():
                     shutil.rmtree(target_skill_dir)
-                os.symlink(str(skill_dir.resolve()), str(target_skill_dir))
+                shutil.copytree(skill_dir, target_skill_dir, symlinks=True)
             result["skills_exported"] += 1
 
         path, mcp_config = read_json_for_scope(ctx, scope, "mcp.json")
