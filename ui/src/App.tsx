@@ -145,13 +145,24 @@ export default function App() {
 
   if (!data) return <div className="p-8 text-[var(--color-text-main)] font-mono animate-pulse">Initializing Control Plane...</div>;
 
+  const baseResourceGroups = [
+    { key: 'skills', title: 'Skills', icon: BookOpen, items: (data.skills || []).map(i => ({ ...i, type: i.type || 'skill' })), type: 'skill' },
+    { key: 'agents', title: 'Agents', icon: Cpu, items: (data.agents || []).map(i => ({ ...i, type: i.type || 'agent' })), type: 'agent' },
+    { key: 'tasks', title: 'Tasks', icon: Activity, items: (data.tasks || []).map(i => ({ ...i, type: i.type || 'task' })), type: 'task' },
+    { key: 'mcpServers', title: 'MCP Servers', icon: Terminal, items: (data.mcpServers || []).map(i => ({ ...i, type: i.type || 'mcp-server' })), type: 'mcp-server' },
+    { key: 'memories', title: 'Memories', icon: Database, items: (data.memories || []).map(i => ({ ...i, type: i.type || 'memory' })), type: 'memory' },
+    { key: 'targets', title: 'Sync Targets', icon: Link, items: (data.targets || []).map(i => ({ ...i, type: i.type || 'target' })), type: 'target' }
+  ];
+
   const resourceGroups = [
-    { key: 'skills', title: 'Skills', icon: BookOpen, items: data.skills, type: 'skill' },
-    { key: 'agents', title: 'Agents', icon: Cpu, items: data.agents, type: 'agent' },
-    { key: 'tasks', title: 'Tasks', icon: Activity, items: data.tasks, type: 'task' },
-    { key: 'mcpServers', title: 'MCP Servers', icon: Terminal, items: data.mcpServers, type: 'mcp-server' },
-    { key: 'memories', title: 'Memories', icon: Database, items: data.memories, type: 'memory' },
-    { key: 'targets', title: 'Sync Targets', icon: Link, items: data.targets || [], type: 'target' }
+    ...baseResourceGroups,
+    {
+      key: 'symlinks',
+      title: 'Local Symlinks',
+      icon: ExternalLink,
+      items: baseResourceGroups.filter(g => g.key !== 'targets').flatMap(g => g.items.filter(i => i.is_symlink)),
+      type: 'mixed'
+    }
   ];
 
   return (
@@ -213,7 +224,7 @@ export default function App() {
 
       <div className="flex flex-col gap-6">
         <AnimatePresence mode="popLayout">
-          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'targets')).map((group) => (
+          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'targets' && g.key !== 'symlinks')).map((group) => (
             <motion.div
               key={group.key}
               initial={{ opacity: 0, y: 10 }}
