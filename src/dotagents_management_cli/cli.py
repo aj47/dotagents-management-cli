@@ -209,11 +209,11 @@ class GenericDirectoryAdapter(AgentAdapter):
     def check_drift(self, ctx: AppContext, scope: str) -> bool:
         if scope == "effective":
             source_mtime = max(
-                get_tree_mtime(ctx.workspace_root, {".backups"}) if ctx.workspace_root.exists() else 0.0,
-                get_tree_mtime(ctx.global_root, {".backups"}) if ctx.global_root.exists() else 0.0
+                get_tree_mtime(ctx.workspace_root, {".backups", "cache", "knowledge", ".git", "node_modules", "venv", ".venv"}) if ctx.workspace_root.exists() else 0.0,
+                get_tree_mtime(ctx.global_root, {".backups", "cache", "knowledge", ".git", "node_modules", "venv", ".venv"}) if ctx.global_root.exists() else 0.0
             )
         else:
-            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups"})
+            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups", "cache", "knowledge", ".git", "node_modules", "venv", ".venv"})
 
         target_dir = ctx.cwd / self.dir_name
         target_mtime = get_tree_mtime(target_dir)
@@ -349,11 +349,11 @@ class ClaudeCodeAdapter(AgentAdapter):
     def check_drift(self, ctx: AppContext, scope: str) -> bool:
         if scope == "effective":
             source_mtime = max(
-                get_tree_mtime(ctx.workspace_root, {".backups"}) if ctx.workspace_root.exists() else 0.0,
-                get_tree_mtime(ctx.global_root, {".backups"}) if ctx.global_root.exists() else 0.0
+                get_tree_mtime(ctx.workspace_root, {".backups", "cache", "knowledge", ".git", "node_modules", "venv", ".venv"}) if ctx.workspace_root.exists() else 0.0,
+                get_tree_mtime(ctx.global_root, {".backups", "cache", "knowledge", ".git", "node_modules", "venv", ".venv"}) if ctx.global_root.exists() else 0.0
             )
         else:
-            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups"})
+            source_mtime = get_tree_mtime(scope_path(ctx, scope), {".backups", "cache", "knowledge", ".git", "node_modules", "venv", ".venv"})
 
         mcp_dest = ctx.cwd / "claude.json"
         target_mtime = get_tree_mtime(mcp_dest)
@@ -566,14 +566,15 @@ def get_tree_mtime(path: Path, exclude_names: set[str] | None = None) -> float:
     if path.is_file():
         return max_mtime
     exclude = exclude_names or set()
-    for item in path.rglob("*"):
-        if any(part in exclude for part in item.parts):
-            continue
-        try:
-            if item.exists():
-                max_mtime = max(max_mtime, item.stat().st_mtime)
-        except OSError:
-            pass
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in exclude]
+        for name in files + dirs:
+            if name in exclude:
+                continue
+            try:
+                max_mtime = max(max_mtime, os.stat(os.path.join(root, name)).st_mtime)
+            except OSError:
+                pass
     return max_mtime
 
 
