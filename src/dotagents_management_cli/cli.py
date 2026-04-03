@@ -396,6 +396,17 @@ class DummyAdapter(AgentAdapter):
         return False
 
 
+class DotagentsMonoAdapter(AgentAdapter):
+    def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "export", "target": "dotagents", "dry_run": dry_run}
+
+    def import_from_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
+        return {"action": "import", "target": "dotagents", "dry_run": dry_run}
+
+    def check_drift(self, ctx: AppContext, scope: str) -> bool:
+        return False
+
+
 TARGET_REGISTRY: dict[str, type[AgentAdapter]] = {
     "augment": AugmentAdapter,
     "dummy": DummyAdapter,
@@ -405,6 +416,7 @@ TARGET_REGISTRY: dict[str, type[AgentAdapter]] = {
     "opencode": OpenCodeAdapter,
     "pi": PiAdapter,
     "gemini": GeminiAdapter,
+    "dotagents": DotagentsMonoAdapter,
 }
 
 

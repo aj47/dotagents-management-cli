@@ -344,7 +344,7 @@ export default function App() {
                           <div className="mt-1 border-t border-dashed border-[var(--color-border)] pt-1 flex flex-col gap-1">
                             <h4 className="font-mono text-[9px] uppercase text-[var(--color-text-muted)] leading-none">Allowed Harnesses</h4>
                             <div className="flex flex-wrap gap-1">
-                              {['augment', 'cursor', 'claude-code', 'codex', 'opencode', 'pi', 'gemini'].map((target) => {
+                              {['augment', 'cursor', 'claude-code', 'codex', 'opencode', 'pi', 'gemini', 'dotagents'].map((target) => {
                                 const hasTarget = item.allowed_targets.includes(target);
                                 const toggleKey = `target-${item.id}-${target}`;
                                 const isLoading = loadingToggles[toggleKey];
