@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Power, Terminal, Cpu, Database, Zap, BookOpen, Layers, Activity, RefreshCw } from 'lucide-react';
+import { Power, Terminal, Cpu, Database, Zap, BookOpen, Layers, Activity, RefreshCw, Link } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const activeStatuses = ['in-progress', 'in_progress', 'active', 'connected'];
@@ -36,7 +36,7 @@ export default function App() {
     memories: any[];
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'agents' | 'skills' | 'tasks' | 'mcpServers' | 'memories' | 'symlinks'>('all');
   const [syncing, setSyncing] = useState(false);
   const [loadingToggles, setLoadingToggles] = useState<Record<string, boolean>>({});
 
@@ -99,7 +99,7 @@ export default function App() {
 
     try {
       await Promise.all(itemsToToggle.map(item =>
-        fetch(`/api/resources/${groupType}/${item.id}/${action}`, { method: 'POST' })
+        fetch(`/api/resources/${item.type || groupType}/${item.id}/${action}`, { method: 'POST' })
       ));
       const res = await fetch('/api/resources');
       setData(await res.json());
@@ -129,12 +129,21 @@ export default function App() {
 
   if (!data) return <div className="p-8 text-[var(--color-text-main)] font-mono animate-pulse">Initializing Control Plane...</div>;
 
+  const symlinkItems = [
+    ...(data.skills || []),
+    ...(data.agents || []),
+    ...(data.tasks || []),
+    ...(data.mcpServers || []),
+    ...(data.memories || [])
+  ].filter(item => item.is_symlink);
+
   const resourceGroups = [
     { key: 'skills', title: 'Skills', icon: BookOpen, items: data.skills, type: 'skill' },
     { key: 'agents', title: 'Agents', icon: Cpu, items: data.agents, type: 'agent' },
     { key: 'tasks', title: 'Tasks', icon: Activity, items: data.tasks, type: 'task' },
     { key: 'mcpServers', title: 'MCP Servers', icon: Terminal, items: data.mcpServers, type: 'mcp-server' },
-    { key: 'memories', title: 'Memories', icon: Database, items: data.memories, type: 'memory' }
+    { key: 'memories', title: 'Memories', icon: Database, items: data.memories, type: 'memory' },
+    { key: 'symlinks', title: 'Symlinks', icon: Link, items: symlinkItems, type: 'mixed' }
   ];
 
   return (
@@ -196,7 +205,7 @@ export default function App() {
 
       <div className="flex flex-col gap-6">
         <AnimatePresence mode="popLayout">
-          {resourceGroups.filter(g => activeTab === 'all' || activeTab === g.key).map((group) => (
+          {resourceGroups.filter(g => activeTab === g.key || (activeTab === 'all' && g.key !== 'symlinks')).map((group) => (
             <motion.div
               key={group.key}
               initial={{ opacity: 0, y: 10 }}
@@ -264,7 +273,7 @@ export default function App() {
                             <StatusBadge status={item.status} />
                           </div>
                           <button
-                            onClick={() => handleToggle(group.type, item.id, isEnabled)}
+                            onClick={() => handleToggle(item.type || group.type, item.id, isEnabled)}
                             className={`flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[9px] uppercase font-bold transition-all shrink-0
                               ${isEnabled
                                 ? 'border-[var(--color-text-main)] text-[var(--color-text-main)] bg-transparent hover:border-[var(--color-accent-primary)] hover:text-[var(--color-accent-primary)]'
