@@ -44,6 +44,26 @@ class DotagentsCliTests(unittest.TestCase):
         self.assertTrue(backups)
         self.run_cli("--workspace", "enable", "skill", "writer")
         self.assertTrue(skill_dir.exists())
+    def test_remove_skill_and_mcp_completely(self) -> None:
+        skill_dir = self.workspace / ".agents" / "skills" / "writer"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "README.md").write_text("# writer")
+
+        mcp_path = self.workspace / ".agents" / "mcp.json"
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_path.write_text(json.dumps({"mcpServers": {"server1": {"command": "echo", "tools": ["tool1"]}}}))
+
+        self.run_cli("--workspace", "remove", "skill", "writer")
+        self.assertFalse(skill_dir.exists())
+
+        self.run_cli("--workspace", "remove", "mcp-tool", "server1.tool1")
+        mcp_config = json.loads(mcp_path.read_text())
+        self.assertNotIn("tool1", mcp_config["mcpServers"]["server1"].get("tools", {}))
+
+        self.run_cli("--workspace", "remove", "mcp-server", "server1")
+        mcp_config = json.loads(mcp_path.read_text())
+        self.assertNotIn("server1", mcp_config["mcpServers"])
+
 
     def test_disable_and_enable_all_skills_moves_every_skill(self) -> None:
         write(self.workspace / ".agents" / "skills" / "writer" / "README.md", "# writer")

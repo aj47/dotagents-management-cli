@@ -28,7 +28,7 @@ METADATA_FILES = {
 }
 SETTINGS_FILES = ("dotagents-settings.json", "speakmcp-settings.json")
 SECRET_HINTS = ("secret", "token", "password", "apikey", "api_key", "key")
-MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
+MUTATING_COMMANDS = {"enable", "disable", "remove", "allow", "deny", "set", "backup", "sync"}
 RESOURCE_ACTION_OPTIONS = [
     ("skill", "Skill"),
     ("all-skills", "All skills"),
@@ -443,7 +443,7 @@ class TuiState:
     selected_item_index: int = 0
     selected_inspect_index: int = 0
     inspect_items: list[dict[str, Any]] | None = None
-    last_output: str = "Welcome to manage-dotagents. Browse categories, inspect items, and press `t` to toggle the selected item."
+    last_output: str = "Welcome to manage-dotagents. Browse categories, inspect items, press `t` to toggle, or `r` to remove."
     status_message: str = "Ready"
 
 
@@ -502,6 +502,13 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
         item_parser = disable_subparsers.add_parser(kind)
         item_parser.add_argument("id")
     disable_subparsers.add_parser("all-skills")
+
+    remove_parser = subparsers.add_parser("remove")
+    remove_subparsers = remove_parser.add_subparsers(dest="remove_type", required=True)
+    for kind in ("skill", "agent", "task", "memory", "mcp-server", "mcp-tool"):
+        item_parser = remove_subparsers.add_parser(kind)
+        item_parser.add_argument("id")
+    remove_subparsers.add_parser("all-skills")
 
     for verb in ("allow", "deny"):
         parser_obj = subparsers.add_parser(verb)
@@ -1389,6 +1396,145 @@ def mutate_command(ctx: AppContext, args: argparse.Namespace, enabled: bool) -> 
     human_text = f"{payload['action']}d {payload['type']} `{payload['id']}`"
     return CommandResult(payload={"scope": scope, "change": payload}, human_text=human_text)
 
+def remove_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    item_type = args.remove_type
+    item_id = getattr(args, "id", None)
+
+    root = scope_path(ctx, scope)
+    make_backup(root, f"remove {item_type} {item_id}", dry_run=args.dry_run)
+
+    if item_type == "all-skills":
+        active_dir = root / "skills"
+        disabled_dir = root / ".disabled" / "skills"
+        changed_ids = []
+        for b_dir in (active_dir, disabled_dir):
+            if b_dir.exists():
+                for item in sorted(b_dir.iterdir()):
+                    if not item.is_dir() and not item.is_symlink():
+                        continue
+                    changed_ids.append(item.name)
+                    if not args.dry_run:
+                        if item.is_symlink() or not item.is_dir():
+                            item.unlink()
+                        else:
+                            shutil.rmtree(item)
+        payload = {
+            "action": "remove",
+            "type": "all-skills",
+            "scope": scope,
+            "changed_count": len(changed_ids),
+            "changed_ids": changed_ids,
+            "dry_run": args.dry_run,
+        }
+        human_text = f"Removed {len(changed_ids)} items for `all-skills` in {scope} scope."
+        if changed_ids:
+            human_text += "\nChanged: " + ", ".join(changed_ids)
+        else:
+            human_text += "\nNo matching skills were found to change."
+        return CommandResult(payload={"scope": scope, "change": payload}, human_text=human_text)
+
+    if item_type in {"skill", "agent", "task", "memory"}:
+        active_path = root / f"{item_type}s" / item_id
+        disabled_path = root / ".disabled" / f"{item_type}s" / item_id
+        target_path = None
+        if active_path.exists():
+            target_path = active_path
+        elif disabled_path.exists():
+            target_path = disabled_path
+
+        if not target_path:
+            raise CliError(f"Unknown {item_type} `{item_id}`.")
+
+        payload = {"action": "remove", "type": item_type, "id": item_id, "path": str(target_path), "dry_run": args.dry_run}
+        if not args.dry_run:
+            if target_path.is_symlink() or not target_path.is_dir():
+                target_path.unlink()
+            else:
+                shutil.rmtree(target_path)
+
+    else:
+        path, config = read_managed_json(ctx, scope, "mcp.json")
+        if item_type == "mcp-server":
+            servers = config.get("mcpServers") or config.get("servers") or {}
+            if isinstance(servers, dict) and item_id in servers:
+                del servers[item_id]
+                if "mcpServers" in config:
+                    config["mcpServers"] = servers
+                elif "servers" in config:
+                    config["servers"] = servers
+            else:
+                raise CliError(f"Unknown mcp-server `{item_id}`.")
+
+            disabled_servers = list(config.get("mcpRuntimeDisabledServers") or [])
+            if item_id in disabled_servers:
+                disabled_servers.remove(item_id)
+                config["mcpRuntimeDisabledServers"] = disabled_servers
+        else:
+            tool_removed = False
+            top_level = config.get("mcpTools") or config.get("tools") or {}
+
+            if isinstance(top_level, dict) and item_id in top_level:
+                del top_level[item_id]
+                tool_removed = True
+                if "mcpTools" in config:
+                    config["mcpTools"] = top_level
+                elif "tools" in config:
+                    config["tools"] = top_level
+            elif isinstance(top_level, list):
+                new_top_level = []
+                for item in top_level:
+                    if isinstance(item, str) and item == item_id:
+                        tool_removed = True
+                        continue
+                    elif isinstance(item, dict) and (item.get("id") == item_id or item.get("name") == item_id):
+                        tool_removed = True
+                        continue
+                    new_top_level.append(item)
+                if tool_removed:
+                    if "mcpTools" in config:
+                        config["mcpTools"] = new_top_level
+                    elif "tools" in config:
+                        config["tools"] = new_top_level
+
+            if not tool_removed and "." in item_id:
+                server_id, tool_name = item_id.split(".", 1)
+                servers = config.get("mcpServers") or config.get("servers") or {}
+                if isinstance(servers, dict) and server_id in servers and isinstance(servers[server_id], dict):
+                    server_tools = servers[server_id].get("tools") or {}
+                    if isinstance(server_tools, dict) and tool_name in server_tools:
+                        del server_tools[tool_name]
+                        servers[server_id]["tools"] = server_tools
+                        tool_removed = True
+                    elif isinstance(server_tools, list):
+                        new_server_tools = []
+                        for item in server_tools:
+                            if isinstance(item, str) and item == tool_name:
+                                tool_removed = True
+                                continue
+                            elif isinstance(item, dict) and (item.get("id") == tool_name or item.get("name") == tool_name):
+                                tool_removed = True
+                                continue
+                            new_server_tools.append(item)
+                        if tool_removed:
+                            servers[server_id]["tools"] = new_server_tools
+
+            if not tool_removed:
+                raise CliError(f"Unknown mcp-tool `{item_id}`.")
+
+            disabled_tools = list(config.get("mcpDisabledTools") or [])
+            if item_id in disabled_tools:
+                disabled_tools.remove(item_id)
+                config["mcpDisabledTools"] = disabled_tools
+
+        payload = {"action": "remove", "type": item_type, "id": item_id, "path": str(path), "dry_run": args.dry_run}
+        if not args.dry_run:
+            atomic_write_json(path, config)
+
+    human_text = f"Removed {payload['type']} `{payload['id']}`"
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=human_text)
+
+
 
 def target_permission_command(ctx: AppContext, args: argparse.Namespace, scope: str, allowed: bool) -> CommandResult:
     if args.target_id not in TARGET_REGISTRY:
@@ -1701,6 +1847,7 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         "",
         "Actions:",
         "- Press t to toggle on/off",
+        "- Press r to completely remove",
         "- Press Enter to inspect",
         "- Press Tab or → to focus items, ← to go back",
     ])
@@ -2528,6 +2675,30 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                     state.last_output = f"Error: {exc}"
                     state.status_message = "Error"
                 continue
+            if key == ord("r"):
+                item = current_tui_item(state, browser_data)
+                if item is None:
+                    state.status_message = "No item selected to remove"
+                    continue
+                category = current_tui_category(state, browser_data)
+                command_args = ["remove", category.toggle_type, item["id"]]
+                target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                if target_scope not in {"global", "workspace"}:
+                    resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                    if not resolved_scope:
+                        state.status_message = "Cancelled"
+                        continue
+                    target_scope = resolved_scope
+                try:
+                    result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                    state.last_output = result.human_text
+                    state.status_message = f"Removed {item['id']}"
+                    browser_data = build_tui_browser_data(ctx, state.scope)
+                    state.focus = "categories"  # jump back to categories since item is gone
+                except CliError as exc:
+                    state.last_output = f"Error: {exc}"
+                    state.status_message = "Error"
+                continue
             if key not in {10, 13, curses.KEY_ENTER}:
                 continue
             if state.focus == "categories":
@@ -2634,6 +2805,8 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
         result = mutate_command(ctx, args, True)
     elif command == "disable":
         result = mutate_command(ctx, args, False)
+    elif command == "remove":
+        result = remove_command(ctx, args)
     elif command == "allow":
         result = permission_command(ctx, args, True)
     elif command == "deny":
