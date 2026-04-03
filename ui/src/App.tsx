@@ -177,7 +177,7 @@ export default function App() {
       <header className="mb-6 border-b border-[var(--color-border)] pb-4 flex flex-row justify-between items-center gap-4">
         <h1 className="text-2xl md:text-4xl font-display font-black tracking-tighter leading-[0.85] text-[var(--color-text-main)] flex items-center gap-3">
           <Layers className="text-[var(--color-accent-primary)] w-8 h-8 md:w-10 md:h-10" />
-          .<span className="text-[var(--color-accent-primary)]">agents</span>/
+          <span>.<span className="text-[var(--color-accent-primary)]">agents</span>/</span>
         </h1>
         <span className="uppercase text-[var(--color-text-muted)] text-lg md:text-2xl font-display font-black tracking-tighter">control plane</span>
       </header>
