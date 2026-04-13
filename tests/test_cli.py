@@ -182,6 +182,45 @@ class DotagentsCliTests(unittest.TestCase):
         cursorrules_content = (self.workspace / ".agents" / "skills" / "cursorrules" / "SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(cursorrules_content.strip(), "# global rules")
 
+    def test_auto_sync_mcp_server_add_remove_edit(self) -> None:
+        # Configure auto_sync_targets to include cursor
+        write(
+            self.workspace / ".agents" / "dotagents-settings.json",
+            json.dumps({"auto_sync_targets": ["cursor"]}),
+        )
+        write(
+            self.workspace / ".agents" / "mcp.json",
+            json.dumps({"mcpServers": {}}),
+        )
+
+        # Add mcp-server triggers auto-sync to cursor
+        add_result = self.run_cli("--workspace", "add", "mcp-server", "test-server", "--command", "npx", "--args", "test-arg")
+        self.assertIn("Added mcp-server", add_result.human_text)
+        self.assertIn("Auto-synced cursor", add_result.human_text)
+
+        # Verify cursor received the new server
+        cursor_mcp = json.loads((self.workspace / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        self.assertIn("test-server", cursor_mcp["mcpServers"])
+        self.assertEqual(cursor_mcp["mcpServers"]["test-server"]["command"], "npx")
+
+        # Edit mcp-server triggers auto-sync
+        edit_result = self.run_cli("--workspace", "edit", "mcp-server", "test-server", "--command", "node")
+        self.assertIn("Edited mcp-server", edit_result.human_text)
+        self.assertIn("Auto-synced cursor", edit_result.human_text)
+
+        # Verify cursor has the updated config
+        cursor_mcp = json.loads((self.workspace / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        self.assertEqual(cursor_mcp["mcpServers"]["test-server"]["command"], "node")
+
+        # Remove mcp-server triggers auto-sync
+        remove_result = self.run_cli("--workspace", "remove", "mcp-server", "test-server")
+        self.assertIn("Removed mcp-server", remove_result.human_text)
+        self.assertIn("Auto-synced cursor", remove_result.human_text)
+
+        # Verify cursor no longer has the server
+        cursor_mcp = json.loads((self.workspace / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        self.assertNotIn("test-server", cursor_mcp["mcpServers"])
+
 
 if __name__ == "__main__":
     unittest.main()
