@@ -28,7 +28,7 @@ METADATA_FILES = {
 }
 SETTINGS_FILES = ("dotagents-settings.json", "speakmcp-settings.json")
 SECRET_HINTS = ("secret", "token", "password", "apikey", "api_key", "key")
-MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
+MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync", "add", "remove", "edit"}
 RESOURCE_ACTION_OPTIONS = [
     ("skill", "Skill"),
     ("all-skills", "All skills"),
@@ -350,6 +350,8 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     show_subparsers = show_parser.add_subparsers(dest="show_type", required=True)
     agent_parser = show_subparsers.add_parser("agent")
     agent_parser.add_argument("id")
+    show_mcp_server_parser = show_subparsers.add_parser("mcp-server")
+    show_mcp_server_parser.add_argument("id")
 
     get_parser = subparsers.add_parser("get")
     get_subparsers = get_parser.add_subparsers(dest="get_type", required=True)
@@ -389,6 +391,32 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     backup_subparsers.add_parser("create")
     restore_parser = backup_subparsers.add_parser("restore")
     restore_parser.add_argument("backup_id")
+
+    # add mcp-server command
+    add_parser = subparsers.add_parser("add")
+    add_subparsers = add_parser.add_subparsers(dest="add_type", required=True)
+    add_mcp_server_parser = add_subparsers.add_parser("mcp-server")
+    add_mcp_server_parser.add_argument("id")
+    add_mcp_server_parser.add_argument("--command", dest="mcp_command")
+    add_mcp_server_parser.add_argument("--args", action="append", default=[], dest="mcp_args")
+    add_mcp_server_parser.add_argument("--env", action="append", default=[], dest="mcp_env")
+    add_mcp_server_parser.add_argument("--url", dest="mcp_url")
+
+    # remove mcp-server command
+    remove_parser = subparsers.add_parser("remove")
+    remove_subparsers = remove_parser.add_subparsers(dest="remove_type", required=True)
+    remove_mcp_server_parser = remove_subparsers.add_parser("mcp-server")
+    remove_mcp_server_parser.add_argument("id")
+
+    # edit mcp-server command
+    edit_parser = subparsers.add_parser("edit")
+    edit_subparsers = edit_parser.add_subparsers(dest="edit_type", required=True)
+    edit_mcp_server_parser = edit_subparsers.add_parser("mcp-server")
+    edit_mcp_server_parser.add_argument("id")
+    edit_mcp_server_parser.add_argument("--command", dest="mcp_command")
+    edit_mcp_server_parser.add_argument("--args", action="append", dest="mcp_args")
+    edit_mcp_server_parser.add_argument("--env", action="append", dest="mcp_env")
+    edit_mcp_server_parser.add_argument("--url", dest="mcp_url")
 
     sync_parser = subparsers.add_parser("sync")
     sync_parser.add_argument("--target", required=True, choices=list(TARGET_REGISTRY.keys()))
@@ -962,6 +990,144 @@ def mutate_mcp(ctx: AppContext, scope: str, item_type: str, item_id: str, enable
     return payload
 
 
+def parse_env_vars(env_list: list[str]) -> dict[str, str]:
+    """Parse KEY=VALUE pairs from command line into a dict."""
+    result: dict[str, str] = {}
+    for item in env_list:
+        if "=" not in item:
+            raise CliError(f"Invalid env format `{item}`. Expected KEY=VALUE.")
+        key, value = item.split("=", 1)
+        result[key] = value
+    return result
+
+
+def add_mcp_server(ctx: AppContext, scope: str, server_id: str, command: str | None, args: list[str], env: list[str], url: str | None, dry_run: bool = False) -> dict[str, Any]:
+    """Add a new MCP server to mcp.json."""
+    if not command and not url:
+        raise CliError("Either --command or --url is required.")
+    if command and url:
+        raise CliError("Cannot specify both --command and --url.")
+
+    path, config = read_managed_json(ctx, scope, "mcp.json")
+    servers = config.setdefault("mcpServers", {})
+
+    if server_id in servers:
+        raise CliError(f"MCP server `{server_id}` already exists. Use `edit mcp-server` to modify it.")
+
+    if command:
+        server_config: dict[str, Any] = {"command": command}
+        if args:
+            server_config["args"] = args
+        if env:
+            server_config["env"] = parse_env_vars(env)
+    else:
+        server_config = {"url": url}
+
+    servers[server_id] = server_config
+    payload = {"action": "add", "type": "mcp-server", "id": server_id, "config": server_config, "path": str(path), "dry_run": dry_run}
+
+    if dry_run:
+        return payload
+    atomic_write_json(path, config)
+    return payload
+
+
+def remove_mcp_server(ctx: AppContext, scope: str, server_id: str, dry_run: bool = False) -> dict[str, Any]:
+    """Remove an MCP server from mcp.json."""
+    path, config = read_managed_json(ctx, scope, "mcp.json")
+    servers = mcp_servers_from_config(config)
+
+    if server_id not in servers:
+        raise CliError(f"Unknown mcp-server `{server_id}`.")
+
+    removed_config = servers[server_id]
+    del config["mcpServers"][server_id]
+
+    # Also remove from disabled list if present
+    disabled = list(config.get("mcpRuntimeDisabledServers") or [])
+    if server_id in disabled:
+        disabled.remove(server_id)
+        config["mcpRuntimeDisabledServers"] = disabled
+
+    payload = {"action": "remove", "type": "mcp-server", "id": server_id, "removed_config": removed_config, "path": str(path), "dry_run": dry_run}
+
+    if dry_run:
+        return payload
+    atomic_write_json(path, config)
+    return payload
+
+
+def edit_mcp_server(ctx: AppContext, scope: str, server_id: str, command: str | None, args: list[str] | None, env: list[str] | None, url: str | None, dry_run: bool = False) -> dict[str, Any]:
+    """Edit an existing MCP server in mcp.json."""
+    path, config = read_managed_json(ctx, scope, "mcp.json")
+    servers = mcp_servers_from_config(config)
+
+    if server_id not in servers:
+        raise CliError(f"Unknown mcp-server `{server_id}`.")
+
+    server_config = dict(servers[server_id])
+    old_config = dict(server_config)
+
+    # If switching to URL-based, clear command fields
+    if url is not None:
+        server_config = {"url": url}
+    elif command is not None:
+        # If switching to command-based, clear url field
+        server_config.pop("url", None)
+        server_config["command"] = command
+        if args is not None:
+            if args:
+                server_config["args"] = args
+            else:
+                server_config.pop("args", None)
+        if env is not None:
+            if env:
+                server_config["env"] = parse_env_vars(env)
+            else:
+                server_config.pop("env", None)
+    else:
+        # Just updating args or env
+        if args is not None:
+            if args:
+                server_config["args"] = args
+            else:
+                server_config.pop("args", None)
+        if env is not None:
+            if env:
+                server_config["env"] = parse_env_vars(env)
+            else:
+                server_config.pop("env", None)
+
+    config["mcpServers"][server_id] = server_config
+    payload = {"action": "edit", "type": "mcp-server", "id": server_id, "old_config": old_config, "new_config": server_config, "path": str(path), "dry_run": dry_run}
+
+    if dry_run:
+        return payload
+    atomic_write_json(path, config)
+    return payload
+
+
+def show_mcp_server(ctx: AppContext, scope: str, server_id: str) -> dict[str, Any]:
+    """Get full config of one MCP server."""
+    path, config = read_json_for_scope(ctx, scope, "mcp.json")
+    servers = mcp_servers_from_config(config)
+
+    if server_id not in servers:
+        raise CliError(f"Unknown mcp-server `{server_id}`.")
+
+    server_config = servers[server_id]
+    disabled = mcp_disabled_servers(config)
+
+    return {
+        "id": server_id,
+        "type": "mcp-server",
+        "scope": scope,
+        "path": str(path),
+        "enabled": server_id not in disabled,
+        "config": redact_value("config", server_config),
+    }
+
+
 def mutate_setting(ctx: AppContext, scope: str, file_kind: str, key: str, value: Any, dry_run: bool = False) -> dict[str, Any]:
     file_name = "settings" if file_kind == "setting" else "models.json"
     path, config = read_managed_json(ctx, scope, file_name)
@@ -1210,6 +1376,43 @@ def set_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
     make_backup(root, f"set {args.set_type} {args.key}", dry_run=args.dry_run)
     payload = mutate_setting(ctx, scope, args.set_type, args.key, parse_value(args.value), dry_run=args.dry_run)
     return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Set {args.set_type} `{args.key}`")
+
+
+def add_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    root = scope_path(ctx, scope)
+    make_backup(root, f"add mcp-server {args.id}", dry_run=args.dry_run)
+    payload = add_mcp_server(ctx, scope, args.id, args.mcp_command, args.mcp_args, args.mcp_env, args.mcp_url, dry_run=args.dry_run)
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Added mcp-server `{args.id}`")
+
+
+def remove_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    root = scope_path(ctx, scope)
+    make_backup(root, f"remove mcp-server {args.id}", dry_run=args.dry_run)
+    payload = remove_mcp_server(ctx, scope, args.id, dry_run=args.dry_run)
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Removed mcp-server `{args.id}`")
+
+
+def edit_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    root = scope_path(ctx, scope)
+    make_backup(root, f"edit mcp-server {args.id}", dry_run=args.dry_run)
+    payload = edit_mcp_server(ctx, scope, args.id, args.mcp_command, args.mcp_args, args.mcp_env, args.mcp_url, dry_run=args.dry_run)
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Edited mcp-server `{args.id}`")
+
+
+def show_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_read_scope(args, ctx)
+    payload = show_mcp_server(ctx, scope, args.id)
+    lines = [
+        f"MCP Server: {payload['id']}",
+        f"Enabled: {payload['enabled']}",
+        f"Scope: {payload['scope']}",
+        f"Path: {payload['path']}",
+        f"Config: {json.dumps(payload['config'], indent=2)}",
+    ]
+    return CommandResult(payload=payload, human_text="\n".join(lines))
 
 
 def backup_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
@@ -2273,7 +2476,11 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     if command == "get":
         return get_setting_command(ctx, resolve_read_scope(args, ctx), args.key)
     if command == "show":
-        return show_agent_command(ctx, resolve_read_scope(args, ctx), args.id)
+        if args.show_type == "agent":
+            return show_agent_command(ctx, resolve_read_scope(args, ctx), args.id)
+        if args.show_type == "mcp-server":
+            return show_mcp_server_command(ctx, args)
+        raise CliError(f"Unsupported show type `{args.show_type}`.")
     if command == "doctor":
         return doctor_command(ctx, resolve_read_scope(args, ctx))
     if command == "diff":
@@ -2292,10 +2499,25 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
         result = backup_command(ctx, args)
     elif command == "sync":
         result = sync_command(ctx, args)
+    elif command == "add":
+        if args.add_type == "mcp-server":
+            result = add_mcp_server_command(ctx, args)
+        else:
+            raise CliError(f"Unsupported add type `{args.add_type}`.")
+    elif command == "remove":
+        if args.remove_type == "mcp-server":
+            result = remove_mcp_server_command(ctx, args)
+        else:
+            raise CliError(f"Unsupported remove type `{args.remove_type}`.")
+    elif command == "edit":
+        if args.edit_type == "mcp-server":
+            result = edit_mcp_server_command(ctx, args)
+        else:
+            raise CliError(f"Unsupported edit type `{args.edit_type}`.")
     else:
         raise CliError(f"Unsupported command `{command}`.")
 
-    if command in {"enable", "disable", "allow", "deny", "set"}:
+    if command in {"enable", "disable", "allow", "deny", "set", "add", "remove", "edit"}:
         trigger_auto_sync(ctx, args, result)
 
     return result
