@@ -28,7 +28,7 @@ METADATA_FILES = {
 }
 SETTINGS_FILES = ("dotagents-settings.json", "speakmcp-settings.json")
 SECRET_HINTS = ("secret", "token", "password", "apikey", "api_key", "key")
-MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync"}
+MUTATING_COMMANDS = {"enable", "disable", "allow", "deny", "set", "backup", "sync", "add", "remove", "edit"}
 RESOURCE_ACTION_OPTIONS = [
     ("skill", "Skill"),
     ("all-skills", "All skills"),
@@ -84,6 +84,22 @@ class AgentAdapter(abc.ABC):
     def check_drift(self, ctx: AppContext, scope: str) -> bool:
         """Return True if the target is out of sync with the .agents directory."""
         return False
+
+    def list_mcp_servers(self, ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+        """Return MCP servers from this harness's native config."""
+        return []
+
+    def add_mcp_server(self, ctx: AppContext, server_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        """Add an MCP server to this harness's native config."""
+        raise CliError(f"add_mcp_server not supported by {type(self).__name__}")
+
+    def remove_mcp_server(self, ctx: AppContext, server_id: str) -> dict[str, Any]:
+        """Remove an MCP server from this harness's native config."""
+        raise CliError(f"remove_mcp_server not supported by {type(self).__name__}")
+
+    def edit_mcp_server(self, ctx: AppContext, server_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Edit an MCP server in this harness's native config."""
+        raise CliError(f"edit_mcp_server not supported by {type(self).__name__}")
 
 
 class GenericDirectoryAdapter(AgentAdapter):
@@ -194,6 +210,56 @@ class GenericDirectoryAdapter(AgentAdapter):
 
         return source_mtime > 0 and source_mtime > target_mtime
 
+    def _native_mcp_path(self, ctx: AppContext) -> Path:
+        return ctx.cwd / self.dir_name / "mcp.json"
+
+    def _load_native_mcp(self, ctx: AppContext) -> tuple[Path, dict[str, Any]]:
+        path = self._native_mcp_path(ctx)
+        if path.exists():
+            return path, load_json_object(path)
+        return path, {}
+
+    def list_mcp_servers(self, ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+        path, config = self._load_native_mcp(ctx)
+        if not config:
+            return []
+        servers = mcp_servers_from_config(config)
+        rows: list[dict[str, Any]] = []
+        for server_id, server_cfg in sorted(servers.items()):
+            rows.append({"id": server_id, "type": "mcp-server", "current_state": "present", "source": self.target_name, "source_path": str(path), "config": server_cfg})
+        return rows
+
+    def add_mcp_server(self, ctx: AppContext, server_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = data.setdefault("mcpServers", {})
+        if server_id in servers:
+            raise CliError(f"MCP server `{server_id}` already exists in {self.target_name}.")
+        servers[server_id] = config
+        ensure_dir(path.parent)
+        atomic_write_json(path, data)
+        return {"action": "add", "target": self.target_name, "id": server_id, "config": config, "path": str(path)}
+
+    def remove_mcp_server(self, ctx: AppContext, server_id: str) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in {self.target_name}.")
+        removed = servers[server_id]
+        del data["mcpServers"][server_id]
+        atomic_write_json(path, data)
+        return {"action": "remove", "target": self.target_name, "id": server_id, "removed_config": removed, "path": str(path)}
+
+    def edit_mcp_server(self, ctx: AppContext, server_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in {self.target_name}.")
+        old_config = dict(servers[server_id])
+        servers[server_id].update(updates)
+        data["mcpServers"][server_id] = servers[server_id]
+        atomic_write_json(path, data)
+        return {"action": "edit", "target": self.target_name, "id": server_id, "old_config": old_config, "new_config": servers[server_id], "path": str(path)}
+
 
 class CursorAdapter(GenericDirectoryAdapter):
     target_name = "cursor"
@@ -274,6 +340,55 @@ class ClaudeCodeAdapter(AgentAdapter):
 
         return source_mtime > 0 and source_mtime > target_mtime
 
+    def _native_mcp_path(self, ctx: AppContext) -> Path:
+        return ctx.cwd / "claude.json"
+
+    def _load_native_mcp(self, ctx: AppContext) -> tuple[Path, dict[str, Any]]:
+        path = self._native_mcp_path(ctx)
+        if path.exists():
+            return path, load_json_object(path)
+        return path, {}
+
+    def list_mcp_servers(self, ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+        path, config = self._load_native_mcp(ctx)
+        if not config:
+            return []
+        servers = mcp_servers_from_config(config)
+        rows: list[dict[str, Any]] = []
+        for server_id, server_cfg in sorted(servers.items()):
+            rows.append({"id": server_id, "type": "mcp-server", "current_state": "present", "source": "claude-code", "source_path": str(path), "config": server_cfg})
+        return rows
+
+    def add_mcp_server(self, ctx: AppContext, server_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = data.setdefault("mcpServers", {})
+        if server_id in servers:
+            raise CliError(f"MCP server `{server_id}` already exists in claude-code.")
+        servers[server_id] = config
+        atomic_write_json(path, data)
+        return {"action": "add", "target": "claude-code", "id": server_id, "config": config, "path": str(path)}
+
+    def remove_mcp_server(self, ctx: AppContext, server_id: str) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in claude-code.")
+        removed = servers[server_id]
+        del data["mcpServers"][server_id]
+        atomic_write_json(path, data)
+        return {"action": "remove", "target": "claude-code", "id": server_id, "removed_config": removed, "path": str(path)}
+
+    def edit_mcp_server(self, ctx: AppContext, server_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in claude-code.")
+        old_config = dict(servers[server_id])
+        servers[server_id].update(updates)
+        data["mcpServers"][server_id] = servers[server_id]
+        atomic_write_json(path, data)
+        return {"action": "edit", "target": "claude-code", "id": server_id, "old_config": old_config, "new_config": servers[server_id], "path": str(path)}
+
 
 class DummyAdapter(AgentAdapter):
     def export_to_target(self, ctx: AppContext, scope: str, dry_run: bool) -> dict[str, Any]:
@@ -350,6 +465,8 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     show_subparsers = show_parser.add_subparsers(dest="show_type", required=True)
     agent_parser = show_subparsers.add_parser("agent")
     agent_parser.add_argument("id")
+    show_mcp_server_parser = show_subparsers.add_parser("mcp-server")
+    show_mcp_server_parser.add_argument("id")
 
     get_parser = subparsers.add_parser("get")
     get_subparsers = get_parser.add_subparsers(dest="get_type", required=True)
@@ -389,6 +506,32 @@ def build_parser(*, require_command: bool = True) -> argparse.ArgumentParser:
     backup_subparsers.add_parser("create")
     restore_parser = backup_subparsers.add_parser("restore")
     restore_parser.add_argument("backup_id")
+
+    # add mcp-server command
+    add_parser = subparsers.add_parser("add")
+    add_subparsers = add_parser.add_subparsers(dest="add_type", required=True)
+    add_mcp_server_parser = add_subparsers.add_parser("mcp-server")
+    add_mcp_server_parser.add_argument("id")
+    add_mcp_server_parser.add_argument("--command", dest="mcp_command")
+    add_mcp_server_parser.add_argument("--args", action="append", default=[], dest="mcp_args")
+    add_mcp_server_parser.add_argument("--env", action="append", default=[], dest="mcp_env")
+    add_mcp_server_parser.add_argument("--url", dest="mcp_url")
+
+    # remove mcp-server command
+    remove_parser = subparsers.add_parser("remove")
+    remove_subparsers = remove_parser.add_subparsers(dest="remove_type", required=True)
+    remove_mcp_server_parser = remove_subparsers.add_parser("mcp-server")
+    remove_mcp_server_parser.add_argument("id")
+
+    # edit mcp-server command
+    edit_parser = subparsers.add_parser("edit")
+    edit_subparsers = edit_parser.add_subparsers(dest="edit_type", required=True)
+    edit_mcp_server_parser = edit_subparsers.add_parser("mcp-server")
+    edit_mcp_server_parser.add_argument("id")
+    edit_mcp_server_parser.add_argument("--command", dest="mcp_command")
+    edit_mcp_server_parser.add_argument("--args", action="append", dest="mcp_args")
+    edit_mcp_server_parser.add_argument("--env", action="append", dest="mcp_env")
+    edit_mcp_server_parser.add_argument("--url", dest="mcp_url")
 
     sync_parser = subparsers.add_parser("sync")
     sync_parser.add_argument("--target", required=True, choices=list(TARGET_REGISTRY.keys()))
@@ -743,11 +886,25 @@ def build_mcp_server_rows(path: Path, config: dict[str, Any], scope: str) -> lis
                 "type": "mcp-server",
                 "current_state": "disabled" if server_id in disabled else "present",
                 "scope": scope,
+                "source": ".agents",
                 "source_path": str(path),
                 "reason": "runtime-disabled in mcp.json" if server_id in disabled else "",
             }
         )
     return rows
+
+
+def collect_all_harness_mcp_servers(ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+    """Collect MCP servers from all registered harness native configs."""
+    rows: list[dict[str, Any]] = []
+    for target_id, adapter_cls in TARGET_REGISTRY.items():
+        adapter = adapter_cls()
+        try:
+            harness_rows = adapter.list_mcp_servers(ctx, scope)
+            rows.extend(harness_rows)
+        except Exception:
+            pass
+    return sorted(rows, key=lambda r: (r.get("source", ""), r.get("id", "")))
 
 
 def build_mcp_tool_rows(path: Path, config: dict[str, Any], scope: str) -> list[dict[str, Any]]:
@@ -962,6 +1119,144 @@ def mutate_mcp(ctx: AppContext, scope: str, item_type: str, item_id: str, enable
     return payload
 
 
+def parse_env_vars(env_list: list[str]) -> dict[str, str]:
+    """Parse KEY=VALUE pairs from command line into a dict."""
+    result: dict[str, str] = {}
+    for item in env_list:
+        if "=" not in item:
+            raise CliError(f"Invalid env format `{item}`. Expected KEY=VALUE.")
+        key, value = item.split("=", 1)
+        result[key] = value
+    return result
+
+
+def add_mcp_server(ctx: AppContext, scope: str, server_id: str, command: str | None, args: list[str], env: list[str], url: str | None, dry_run: bool = False) -> dict[str, Any]:
+    """Add a new MCP server to mcp.json."""
+    if not command and not url:
+        raise CliError("Either --command or --url is required.")
+    if command and url:
+        raise CliError("Cannot specify both --command and --url.")
+
+    path, config = read_managed_json(ctx, scope, "mcp.json")
+    servers = config.setdefault("mcpServers", {})
+
+    if server_id in servers:
+        raise CliError(f"MCP server `{server_id}` already exists. Use `edit mcp-server` to modify it.")
+
+    if command:
+        server_config: dict[str, Any] = {"command": command}
+        if args:
+            server_config["args"] = args
+        if env:
+            server_config["env"] = parse_env_vars(env)
+    else:
+        server_config = {"url": url}
+
+    servers[server_id] = server_config
+    payload = {"action": "add", "type": "mcp-server", "id": server_id, "config": server_config, "path": str(path), "dry_run": dry_run}
+
+    if dry_run:
+        return payload
+    atomic_write_json(path, config)
+    return payload
+
+
+def remove_mcp_server(ctx: AppContext, scope: str, server_id: str, dry_run: bool = False) -> dict[str, Any]:
+    """Remove an MCP server from mcp.json."""
+    path, config = read_managed_json(ctx, scope, "mcp.json")
+    servers = mcp_servers_from_config(config)
+
+    if server_id not in servers:
+        raise CliError(f"Unknown mcp-server `{server_id}`.")
+
+    removed_config = servers[server_id]
+    del config["mcpServers"][server_id]
+
+    # Also remove from disabled list if present
+    disabled = list(config.get("mcpRuntimeDisabledServers") or [])
+    if server_id in disabled:
+        disabled.remove(server_id)
+        config["mcpRuntimeDisabledServers"] = disabled
+
+    payload = {"action": "remove", "type": "mcp-server", "id": server_id, "removed_config": removed_config, "path": str(path), "dry_run": dry_run}
+
+    if dry_run:
+        return payload
+    atomic_write_json(path, config)
+    return payload
+
+
+def edit_mcp_server(ctx: AppContext, scope: str, server_id: str, command: str | None, args: list[str] | None, env: list[str] | None, url: str | None, dry_run: bool = False) -> dict[str, Any]:
+    """Edit an existing MCP server in mcp.json."""
+    path, config = read_managed_json(ctx, scope, "mcp.json")
+    servers = mcp_servers_from_config(config)
+
+    if server_id not in servers:
+        raise CliError(f"Unknown mcp-server `{server_id}`.")
+
+    server_config = dict(servers[server_id])
+    old_config = dict(server_config)
+
+    # If switching to URL-based, clear command fields
+    if url is not None:
+        server_config = {"url": url}
+    elif command is not None:
+        # If switching to command-based, clear url field
+        server_config.pop("url", None)
+        server_config["command"] = command
+        if args is not None:
+            if args:
+                server_config["args"] = args
+            else:
+                server_config.pop("args", None)
+        if env is not None:
+            if env:
+                server_config["env"] = parse_env_vars(env)
+            else:
+                server_config.pop("env", None)
+    else:
+        # Just updating args or env
+        if args is not None:
+            if args:
+                server_config["args"] = args
+            else:
+                server_config.pop("args", None)
+        if env is not None:
+            if env:
+                server_config["env"] = parse_env_vars(env)
+            else:
+                server_config.pop("env", None)
+
+    config["mcpServers"][server_id] = server_config
+    payload = {"action": "edit", "type": "mcp-server", "id": server_id, "old_config": old_config, "new_config": server_config, "path": str(path), "dry_run": dry_run}
+
+    if dry_run:
+        return payload
+    atomic_write_json(path, config)
+    return payload
+
+
+def show_mcp_server(ctx: AppContext, scope: str, server_id: str) -> dict[str, Any]:
+    """Get full config of one MCP server."""
+    path, config = read_json_for_scope(ctx, scope, "mcp.json")
+    servers = mcp_servers_from_config(config)
+
+    if server_id not in servers:
+        raise CliError(f"Unknown mcp-server `{server_id}`.")
+
+    server_config = servers[server_id]
+    disabled = mcp_disabled_servers(config)
+
+    return {
+        "id": server_id,
+        "type": "mcp-server",
+        "scope": scope,
+        "path": str(path),
+        "enabled": server_id not in disabled,
+        "config": redact_value("config", server_config),
+    }
+
+
 def mutate_setting(ctx: AppContext, scope: str, file_kind: str, key: str, value: Any, dry_run: bool = False) -> dict[str, Any]:
     file_name = "settings" if file_kind == "setting" else "models.json"
     path, config = read_managed_json(ctx, scope, file_name)
@@ -1024,7 +1319,9 @@ def list_command(ctx: AppContext, scope: str, list_type: str) -> CommandResult:
     if list_type == "mcp-servers":
         path, config = read_json_for_scope(ctx, scope, "mcp.json")
         rows = build_mcp_server_rows(path, config, scope)
-        return CommandResult(payload={"scope": scope, "type": list_type, "items": rows}, human_text=render_table(rows, ["id", "type", "current_state", "scope", "reason"]))
+        harness_rows = collect_all_harness_mcp_servers(ctx, scope)
+        rows.extend(harness_rows)
+        return CommandResult(payload={"scope": scope, "type": list_type, "items": rows}, human_text=render_table(rows, ["id", "type", "current_state", "source", "scope", "reason"]))
     if list_type == "mcp-tools":
         path, config = read_json_for_scope(ctx, scope, "mcp.json")
         rows = build_mcp_tool_rows(path, config, scope)
@@ -1210,6 +1507,43 @@ def set_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
     make_backup(root, f"set {args.set_type} {args.key}", dry_run=args.dry_run)
     payload = mutate_setting(ctx, scope, args.set_type, args.key, parse_value(args.value), dry_run=args.dry_run)
     return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Set {args.set_type} `{args.key}`")
+
+
+def add_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    root = scope_path(ctx, scope)
+    make_backup(root, f"add mcp-server {args.id}", dry_run=args.dry_run)
+    payload = add_mcp_server(ctx, scope, args.id, args.mcp_command, args.mcp_args, args.mcp_env, args.mcp_url, dry_run=args.dry_run)
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Added mcp-server `{args.id}`")
+
+
+def remove_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    root = scope_path(ctx, scope)
+    make_backup(root, f"remove mcp-server {args.id}", dry_run=args.dry_run)
+    payload = remove_mcp_server(ctx, scope, args.id, dry_run=args.dry_run)
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Removed mcp-server `{args.id}`")
+
+
+def edit_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_write_scope(args, ctx)
+    root = scope_path(ctx, scope)
+    make_backup(root, f"edit mcp-server {args.id}", dry_run=args.dry_run)
+    payload = edit_mcp_server(ctx, scope, args.id, args.mcp_command, args.mcp_args, args.mcp_env, args.mcp_url, dry_run=args.dry_run)
+    return CommandResult(payload={"scope": scope, "change": payload}, human_text=f"Edited mcp-server `{args.id}`")
+
+
+def show_mcp_server_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
+    scope = resolve_read_scope(args, ctx)
+    payload = show_mcp_server(ctx, scope, args.id)
+    lines = [
+        f"MCP Server: {payload['id']}",
+        f"Enabled: {payload['enabled']}",
+        f"Scope: {payload['scope']}",
+        f"Path: {payload['path']}",
+        f"Config: {json.dumps(payload['config'], indent=2)}",
+    ]
+    return CommandResult(payload=payload, human_text="\n".join(lines))
 
 
 def backup_command(ctx: AppContext, args: argparse.Namespace) -> CommandResult:
@@ -1413,6 +1747,8 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         ]
         if category.key == "skills":
             message.append("Press a to toggle all skills for the current target scope.")
+        if category.key == "mcp-servers":
+            message.append("Press n to add a new MCP server.")
         if browser_data.warnings:
             message.extend(["", *browser_data.warnings])
         return "\n".join(message)
@@ -1434,6 +1770,8 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         f"State: {'enabled' if is_item_enabled(item) else 'disabled'} ({item.get('current_state', 'unknown')})",
         f"Scope: {item.get('scope', '')}",
     ]
+    if item.get("source"):
+        lines.append(f"Source: {item['source']}")
     if item.get("source_path"):
         lines.append(f"Path: {item['source_path']}")
     if item.get("reason"):
@@ -1447,6 +1785,12 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
     ])
     if category.key == "skills":
         lines.append("- Press a to toggle all skills for the current target scope")
+    if category.key == "mcp-servers":
+        lines.extend([
+            "- Press n to add new server",
+            "- Press e to edit server",
+            "- Press x to remove server",
+        ])
     if browser_data.warnings:
         lines.extend(["", "Warnings:", *browser_data.warnings])
     return "\n".join(lines)
@@ -1840,6 +2184,102 @@ def preferred_toggle_scope(current_scope: str, item: dict[str, Any]) -> str | No
     return None
 
 
+def curses_prompt_confirm(stdscr: Any, title: str, message: str) -> bool:
+    """Show a confirmation dialog. Returns True if confirmed, False otherwise."""
+    height, width = stdscr.getmaxyx()
+    win_height = 8
+    win_width = min(max(56, len(message) + 6), max(56, width - 4))
+    start_y = max(1, (height - win_height) // 2)
+    start_x = max(1, (width - win_width) // 2)
+    win = curses.newwin(win_height, win_width, start_y, start_x)
+    win.keypad(True)
+    win.box()
+    safe_addnstr(win, 1, 2, title, curses.A_BOLD)
+    safe_addnstr(win, 3, 2, message)
+    safe_addnstr(win, 5, 2, "Press y to confirm, n or Esc to cancel")
+    win.refresh()
+    while True:
+        key = win.getch()
+        if key in {ord("y"), ord("Y")}:
+            return True
+        if key in {ord("n"), ord("N"), 27}:
+            return False
+
+
+MCP_TRANSPORT_OPTIONS = [("stdio", "stdio (command-based)"), ("sse", "sse/http (URL-based)")]
+
+
+def curses_prompt_mcp_server_add(stdscr: Any) -> dict[str, Any] | None:
+    """Prompt for new MCP server details. Returns config dict or None if cancelled."""
+    server_id = curses_prompt_text(stdscr, "Add MCP Server", "Enter server ID:")
+    if not server_id:
+        return None
+
+    transport = curses_prompt_select(stdscr, "Select transport type:", MCP_TRANSPORT_OPTIONS)
+    if not transport:
+        return None
+
+    if transport == "stdio":
+        command = curses_prompt_text(stdscr, "Add MCP Server", "Enter command (e.g., npx -y @modelcontextprotocol/server-xyz):")
+        if not command:
+            return None
+        args_raw = curses_prompt_text(stdscr, "Add MCP Server", "Enter args (space-separated, or leave blank):")
+        args = args_raw.split() if args_raw else []
+        env_raw = curses_prompt_text(stdscr, "Add MCP Server", "Enter env vars (KEY=VAL KEY2=VAL2, or leave blank):")
+        env = env_raw.split() if env_raw else []
+        return {"id": server_id, "command": command, "args": args, "env": env}
+    else:
+        url = curses_prompt_text(stdscr, "Add MCP Server", "Enter server URL:")
+        if not url:
+            return None
+        return {"id": server_id, "url": url}
+
+
+def curses_prompt_mcp_server_edit(stdscr: Any, item: dict[str, Any]) -> dict[str, Any] | None:
+    """Prompt for editing MCP server details. Returns updates dict or None if cancelled."""
+    server_id = item["id"]
+    config = item.get("config") or {}
+
+    # Determine current transport type
+    is_stdio = "command" in config
+    current_type = "stdio" if is_stdio else "sse"
+
+    options = [
+        ("command", f"Change command (current: {config.get('command', 'N/A')})"),
+        ("args", f"Change args (current: {config.get('args', [])})"),
+        ("env", f"Change env (current: {config.get('env', {})})"),
+        ("url", f"Change URL (current: {config.get('url', 'N/A')})"),
+    ]
+
+    field = curses_prompt_select(stdscr, f"Edit MCP Server: {server_id}", options)
+    if not field:
+        return None
+
+    if field == "command":
+        new_command = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new command (current: {config.get('command', '')}):")
+        if new_command is None:
+            return None
+        return {"id": server_id, "command": new_command}
+    elif field == "args":
+        current_args = " ".join(config.get("args", []))
+        new_args_raw = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new args (current: {current_args}):")
+        if new_args_raw is None:
+            return None
+        return {"id": server_id, "args": new_args_raw.split() if new_args_raw else []}
+    elif field == "env":
+        current_env = " ".join(f"{k}={v}" for k, v in (config.get("env") or {}).items())
+        new_env_raw = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new env (KEY=VAL, current: {current_env}):")
+        if new_env_raw is None:
+            return None
+        return {"id": server_id, "env": new_env_raw.split() if new_env_raw else []}
+    elif field == "url":
+        new_url = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new URL (current: {config.get('url', '')}):")
+        if new_url is None:
+            return None
+        return {"id": server_id, "url": new_url}
+    return None
+
+
 def run_tui_utility_command(
     command_args: list[str],
     *,
@@ -1866,6 +2306,10 @@ def inspect_selected_item(
     if category.key == "agents":
         result = run_command_for_interactive(["show", "agent", item["id"]], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
         return result.human_text
+    if category.key == "mcp-servers":
+        result = run_command_for_interactive(["show", "mcp-server", item["id"]], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
+        source_info = f"\nSource: {item.get('source', '.agents')}" if item.get("source") else ""
+        return result.human_text + source_info
     return describe_selected_item(category, item, browser_data)
 
 
@@ -1935,7 +2379,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     for offset, line in enumerate(activity_lines[:activity_space], start=0):
         safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
-    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  A auto-sync  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
+    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  n add  e edit  x remove  p/u/b sync  a all  A auto-sync  r refresh  s scope  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
     stdscr.refresh()
 
@@ -2072,6 +2516,47 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                 browser_data = build_tui_browser_data(ctx, state.scope)
                 continue
             if key == ord("e"):
+                category = current_tui_category(state, browser_data)
+                item = current_tui_item(state, browser_data)
+                # If in MCP Servers with an item selected, edit the server
+                if category.key == "mcp-servers" and item is not None and state.focus == "items":
+                    # Check if this is from .agents (editable) or a harness (read-only display)
+                    source = item.get("source", ".agents")
+                    if source != ".agents":
+                        state.status_message = f"Cannot edit server from {source}. Only .agents servers are editable."
+                        continue
+                    target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                    if target_scope not in {"global", "workspace"}:
+                        resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                        if not resolved_scope:
+                            state.status_message = "Cancelled"
+                            continue
+                        target_scope = resolved_scope
+                    edit_data = curses_prompt_mcp_server_edit(stdscr, item)
+                    if not edit_data:
+                        state.status_message = "Cancelled"
+                        continue
+                    command_args = ["edit", "mcp-server", edit_data["id"]]
+                    if "command" in edit_data:
+                        command_args.extend(["--command", edit_data["command"]])
+                    if "args" in edit_data:
+                        for arg in edit_data["args"]:
+                            command_args.extend(["--args", arg])
+                    if "env" in edit_data:
+                        for env_item in edit_data["env"]:
+                            command_args.extend(["--env", env_item])
+                    if "url" in edit_data:
+                        command_args.extend(["--url", edit_data["url"]])
+                    try:
+                        result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                        state.last_output = result.human_text
+                        state.status_message = f"Edited MCP server {edit_data['id']}"
+                        browser_data = build_tui_browser_data(ctx, state.scope)
+                    except CliError as exc:
+                        state.last_output = f"Error: {exc}"
+                        state.status_message = "Error"
+                    continue
+                # Otherwise, set scope to effective
                 state.scope = "effective"
                 state.status_message = "Scope set to effective"
                 browser_data = build_tui_browser_data(ctx, state.scope)
@@ -2181,6 +2666,70 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                     state.last_output = f"Error: {exc}"
                     state.status_message = "Error"
                 continue
+            if key == ord("n"):
+                category = current_tui_category(state, browser_data)
+                if category.key != "mcp-servers":
+                    state.status_message = "Press n in MCP Servers to add a new server"
+                    continue
+                target_scope = state.scope
+                if target_scope not in {"global", "workspace"}:
+                    resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                    if not resolved_scope:
+                        state.status_message = "Cancelled"
+                        continue
+                    target_scope = resolved_scope
+                add_data = curses_prompt_mcp_server_add(stdscr)
+                if not add_data:
+                    state.status_message = "Cancelled"
+                    continue
+                command_args = ["add", "mcp-server", add_data["id"]]
+                if "command" in add_data:
+                    command_args.extend(["--command", add_data["command"]])
+                    for arg in add_data.get("args", []):
+                        command_args.extend(["--args", arg])
+                    for env_item in add_data.get("env", []):
+                        command_args.extend(["--env", env_item])
+                if "url" in add_data:
+                    command_args.extend(["--url", add_data["url"]])
+                try:
+                    result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                    state.last_output = result.human_text
+                    state.status_message = f"Added MCP server {add_data['id']}"
+                    browser_data = build_tui_browser_data(ctx, state.scope)
+                except CliError as exc:
+                    state.last_output = f"Error: {exc}"
+                    state.status_message = "Error"
+                continue
+            if key == ord("x"):
+                category = current_tui_category(state, browser_data)
+                item = current_tui_item(state, browser_data)
+                if category.key != "mcp-servers" or item is None:
+                    state.status_message = "Select an MCP server to remove"
+                    continue
+                source = item.get("source", ".agents")
+                if source != ".agents":
+                    state.status_message = f"Cannot remove server from {source}. Only .agents servers are removable."
+                    continue
+                target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                if target_scope not in {"global", "workspace"}:
+                    resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                    if not resolved_scope:
+                        state.status_message = "Cancelled"
+                        continue
+                    target_scope = resolved_scope
+                if not curses_prompt_confirm(stdscr, "Remove MCP Server", f"Remove server '{item['id']}'?"):
+                    state.status_message = "Cancelled"
+                    continue
+                command_args = ["remove", "mcp-server", item["id"]]
+                try:
+                    result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                    state.last_output = result.human_text
+                    state.status_message = f"Removed MCP server {item['id']}"
+                    browser_data = build_tui_browser_data(ctx, state.scope)
+                except CliError as exc:
+                    state.last_output = f"Error: {exc}"
+                    state.status_message = "Error"
+                continue
             if key not in {10, 13, curses.KEY_ENTER}:
                 continue
             if state.focus == "categories":
@@ -2273,7 +2822,11 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
     if command == "get":
         return get_setting_command(ctx, resolve_read_scope(args, ctx), args.key)
     if command == "show":
-        return show_agent_command(ctx, resolve_read_scope(args, ctx), args.id)
+        if args.show_type == "agent":
+            return show_agent_command(ctx, resolve_read_scope(args, ctx), args.id)
+        if args.show_type == "mcp-server":
+            return show_mcp_server_command(ctx, args)
+        raise CliError(f"Unsupported show type `{args.show_type}`.")
     if command == "doctor":
         return doctor_command(ctx, resolve_read_scope(args, ctx))
     if command == "diff":
@@ -2292,10 +2845,25 @@ def dispatch(args: argparse.Namespace, ctx: AppContext) -> CommandResult:
         result = backup_command(ctx, args)
     elif command == "sync":
         result = sync_command(ctx, args)
+    elif command == "add":
+        if args.add_type == "mcp-server":
+            result = add_mcp_server_command(ctx, args)
+        else:
+            raise CliError(f"Unsupported add type `{args.add_type}`.")
+    elif command == "remove":
+        if args.remove_type == "mcp-server":
+            result = remove_mcp_server_command(ctx, args)
+        else:
+            raise CliError(f"Unsupported remove type `{args.remove_type}`.")
+    elif command == "edit":
+        if args.edit_type == "mcp-server":
+            result = edit_mcp_server_command(ctx, args)
+        else:
+            raise CliError(f"Unsupported edit type `{args.edit_type}`.")
     else:
         raise CliError(f"Unsupported command `{command}`.")
 
-    if command in {"enable", "disable", "allow", "deny", "set"}:
+    if command in {"enable", "disable", "allow", "deny", "set", "add", "remove", "edit"}:
         trigger_auto_sync(ctx, args, result)
 
     return result

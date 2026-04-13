@@ -1,0 +1,385 @@
+Metadata-Version: 2.4
+Name: manage-dotagents
+Version: 0.1.0
+Summary: CLI for managing .agents protocol configuration
+Author: Augment Agent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
+# DotAgents Management CLI — Product Requirements Document
+
+## Document Status
+- Status: Draft
+- Author: Augment Agent
+- Date: 2026-03-17
+- Product: `dotagents-management-cli`
+
+## Summary
+DotAgents Management CLI is a local command-line tool for inspecting, enabling, disabling, configuring, backing up, and restoring `.agents` Protocol configuration from one interface.
+
+It should let a user manage skills, agents, tasks, memories, MCP servers, MCP tools, model settings, app settings, and other protocol files without manually editing JSON or moving directories around by hand.
+
+The first release should prioritize safe local operations, transparent status reporting, and reversible changes.
+
+## Problem
+Today, `.agents` Protocol configuration is spread across multiple files and folders:
+- root JSON config such as `mcp.json`, `models.json`, and app settings files
+- directory-based resources such as `skills/`, `agents/`, `tasks/`, and `memories/`
+- per-agent config inside `agents/*/config.json`
+- instruction files like `agents.md` and `system-prompt.md`
+
+This makes routine management harder than it should be.
+
+Common tasks like “disable this skill,” “turn off a task,” “hide an MCP server,” or “see what this agent can actually use” require manual edits, custom scripts, or ad hoc folder moves. That increases friction and makes mistakes more likely.
+
+## Vision
+Make `.agents` configuration feel as easy to manage as `git`, `npm`, or `brew`:
+- one CLI
+- one mental model
+- clear status
+- safe changes
+- easy rollback
+
+## Goals
+1. Provide one CLI for all major `.agents` configuration surfaces.
+2. Let users enable and disable resources safely and reversibly.
+3. Support both directory-based resources and file-based config.
+4. Show effective state, not just raw file presence.
+5. Support layered config semantics for global and workspace scopes.
+6. Make backups and restore flows first-class.
+7. Be safe by default with atomic writes, dry-run support, and validation.
+
+## Non-Goals
+1. Remote config syncing in v1.
+2. Multi-user collaboration workflows in v1.
+3. UI app or dashboard in v1.
+4. Full schema migration engine in v1.
+5. Live daemon or file watcher in v1.
+6. Editing arbitrary markdown bodies beyond targeted config operations.
+
+## Primary Users
+### Power users
+People who actively customize `.agents` setups and want fast local control.
+
+### Tool builders
+Developers building on the `.agents` Protocol who need a reference management tool.
+
+### Teams
+Teams sharing workspace `.agents` config who want consistent and scriptable operations.
+
+## User Stories
+- As a user, I want to disable a skill without deleting it.
+- As a user, I want to re-enable a disabled skill later with one command.
+- As a user, I want to list all skills, agents, tasks, and memories with their effective status.
+- As a user, I want to disable an MCP server without manually editing JSON.
+- As a user, I want to see why a skill is unavailable to a specific agent.
+- As a user, I want to back up my config before making changes.
+- As a user, I want to restore a previous config snapshot if something breaks.
+- As a user, I want a doctor command to catch malformed config and orphaned state.
+- As a user, I want dry-run mode so I can preview changes before applying them.
+
+## Product Principles
+### One control plane
+The CLI should expose one consistent interface across all managed config types.
+
+### Safe by default
+Every mutating operation should be reversible and should avoid partial writes.
+
+### Explain the effective state
+The CLI should show not just what exists on disk, but why something is enabled or disabled.
+
+### Respect the protocol
+The CLI should work with plain JSON and markdown frontmatter, without introducing proprietary storage requirements.
+
+### Human- and script-friendly
+Commands should read well in a terminal and also support machine-readable output.
+
+## Supported Resource Types
+### Directory-based resources
+- skills
+- agents
+- tasks
+- memories
+
+### File-based config
+- `mcp.json`
+- `models.json`
+- app settings files such as `dotagents-settings.json` and `speakmcp-settings.json`
+- `layouts/*.json`
+- `agents.md`
+- `system-prompt.md`
+- per-agent `config.json`
+
+## Scope Model
+The CLI must support layered `.agents` semantics:
+- global scope: `~/.agents`
+- workspace scope: `<project>/.agents`
+- effective scope: resolved result after overlay rules
+
+Users should be able to target scope explicitly.
+
+Example flags:
+- `--global`
+- `--workspace`
+- `--effective`
+
+## State Model
+The CLI should distinguish between these concepts:
+- present on disk
+- disabled intentionally
+- enabled in metadata
+- disabled in metadata
+- available globally
+- available in a workspace override
+- allowed or denied for a specific agent
+- active in effective merged state
+
+This distinction is important because a resource can exist but still be unavailable in practice.
+
+## Key Design Decision: Hybrid Management
+The CLI should not rely on a single mechanism for all config.
+
+### Mechanism A: move-based disabling
+Use directory moves for resources whose enabled state is defined primarily by presence.
+
+Recommended disabled store:
+- `.disabled/skills/<id>`
+- `.disabled/agents/<id>`
+- `.disabled/tasks/<id>`
+- `.disabled/memories/<id>`
+
+This is preferred over `tmp/` because disabled state is durable product state, not scratch data.
+
+### Mechanism B: structured config edits
+Use targeted JSON or frontmatter edits for resources whose state is already modeled in config.
+
+Examples:
+- toggle `enabled: true/false` in `agent.md` and `task.md`
+- edit `mcpRuntimeDisabledServers` in `mcp.json`
+- edit `mcpDisabledTools` in `mcp.json`
+- edit per-agent `skillsConfig` in `agents/*/config.json`
+- edit app settings or model settings by key
+
+## Backups and Recovery
+The CLI should maintain a separate backup system from disabled resources.
+
+### Disabled resources
+Disabled resources live under `.disabled/` and remain easy to re-enable.
+
+### Backups
+Backups live under `.backups/<timestamp>/` and represent restorable snapshots.
+
+The user should be able to:
+- create a backup manually
+- auto-create a backup before mutation
+- list backups
+- restore a backup
+- inspect backup metadata
+
+## Core Commands
+### Read-only
+- `dotagents status`
+- `dotagents list skills`
+- `dotagents list agents`
+- `dotagents list tasks`
+- `dotagents list memories`
+- `dotagents list mcp-servers`
+- `dotagents list mcp-tools`
+- `dotagents get setting <key>`
+- `dotagents show agent <id>`
+- `dotagents doctor`
+- `dotagents diff`
+
+### Mutating
+- `dotagents enable skill <id>`
+- `dotagents disable skill <id>`
+- `dotagents enable agent <id>`
+- `dotagents disable agent <id>`
+- `dotagents enable task <id>`
+- `dotagents disable task <id>`
+- `dotagents enable memory <id>`
+- `dotagents disable memory <id>`
+- `dotagents enable mcp-server <id>`
+- `dotagents disable mcp-server <id>`
+- `dotagents enable mcp-tool <id>`
+- `dotagents disable mcp-tool <id>`
+- `dotagents set setting <key> <value>`
+- `dotagents set model <key> <value>`
+- `dotagents allow skill <skill-id> --agent <agent-id>`
+- `dotagents deny skill <skill-id> --agent <agent-id>`
+- `dotagents backup create`
+- `dotagents backup restore <backup-id>`
+
+## Command Behavior Requirements
+### Status and list output
+The CLI must show:
+- resource ID
+- type
+- current state
+- scope
+- source path
+- effective status when relevant
+- reason when disabled or unavailable
+
+### Mutations
+Every mutating command must:
+1. validate target existence or target key path
+2. create or reference a backup point
+3. apply changes atomically where possible
+4. report what changed
+5. fail safely on malformed input
+
+### Dry-run
+All mutating commands should support `--dry-run`.
+
+### Output formats
+Support:
+- default human-readable output
+- `--json` machine-readable output
+
+## Resource-Specific Requirements
+### Skills
+V1 should support move-based disabling and enabling.
+
+Behavior:
+- disable: move active skill directory to `.disabled/skills/<id>`
+- enable: move disabled skill directory back to `skills/<id>`
+- list/status: show whether present, disabled, or referenced by agents
+
+Future support may include `enabled:` frontmatter for skills, but v1 should not require it.
+
+### Agents
+Support both:
+- frontmatter `enabled:` toggles
+- optional hard-disable via `.disabled/agents/`
+
+### Tasks
+Support frontmatter `enabled:` toggles and status reporting.
+
+### Memories
+Support disabling via move-based storage in v1. Memory editing remains out of scope beyond simple state management.
+
+### MCP servers and tools
+Manage state through `mcp.json`.
+
+Required support:
+- disabling and enabling servers
+- disabling and enabling tools
+- listing configured servers and tools
+- explaining whether a server is configured but runtime-disabled
+
+### App settings and model settings
+Support simple typed get/set operations over known JSON files while preserving unknown keys and existing structure.
+
+### Per-agent permissions
+Support effective per-agent controls using existing `skillsConfig` and `toolConfig` structures.
+
+The CLI should explain cases like:
+- skill exists globally but agent has `allSkillsDisabledByDefault: true`
+- skill exists but is not in `enabledSkillIds`
+- tool exists but is disabled by the agent’s `toolConfig`
+
+## Validation Requirements
+The `doctor` command should detect at minimum:
+- malformed JSON
+- malformed frontmatter
+- duplicate resource IDs
+- missing required fields for known resource types
+- broken references from agent configs to missing skills
+- orphaned entries under `.disabled/`
+- orphaned backups
+- conflicting state between move-based and metadata-based disablement
+
+## Security and Privacy Requirements
+1. Redact secrets from normal command output.
+2. Avoid printing full raw config unless explicitly requested.
+3. Preserve unknown secret-bearing keys during writes.
+4. Never send local config off-machine by default.
+5. Prefer local-only operation in v1.
+
+## Performance Requirements
+1. Common commands should feel instant on normal local setups.
+2. Use rename-based moves instead of copy/delete for large directories.
+3. Avoid scanning irrelevant nested folders when indexing resources.
+4. Support repositories where skill folders contain large environments or assets.
+
+## Error Handling Requirements
+The CLI should produce actionable errors.
+
+Examples:
+- “Skill exists but is already disabled at `.disabled/skills/foo`.”
+- “Cannot enable skill because `skills/foo` already exists.”
+- “Malformed `mcp.json`: expected valid JSON object.”
+- “Agent `web-browser` references missing skill `chrome-browser`.”
+
+## Success Metrics
+### Product success
+- A user can perform the top 10 config tasks without manual file edits.
+- A user can recover from a mistake using built-in backup or restore flows.
+- Users can understand effective state with one command.
+
+### Quality success
+- No partial-write corruption in normal operation.
+- No secret leakage in standard CLI output.
+- Clear doctor diagnostics for common misconfigurations.
+
+## Milestones
+### Milestone 1: Inventory and status
+- config discovery layer
+- resource registry
+- list/status commands
+- basic doctor checks
+
+### Milestone 2: Safe toggles
+- enable/disable for skills, agents, tasks, memories
+- backup-on-write
+- dry-run support
+
+### Milestone 3: Config editing
+- MCP server and tool toggles
+- settings get/set
+- models get/set
+- per-agent skill controls
+
+### Milestone 4: Recovery and polish
+- restore flows
+- diff output
+- improved doctor coverage
+- `--json` output
+
+## Open Questions
+1. Should skills gain official `enabled:` frontmatter in the protocol spec, or should presence remain the primary signal?
+2. Should disabled resources live inside `.disabled/` at the same layer, or in a dedicated internal folder such as `.agents/.state/disabled/`?
+3. Should backup creation be mandatory for every mutation or configurable?
+4. How should the CLI resolve duplicate IDs across global and workspace layers when the user targets `--effective`?
+5. Should there be a bulk profile or preset feature in v1, such as “focus mode” or “content mode”?
+6. Which settings files are canonical when both legacy and current app settings files exist?
+
+## Recommended Technical Direction
+Prototype as a local CLI with a strong internal resource registry and explicit operation handlers per config type.
+
+Suggested implementation priorities:
+1. discovery and indexing
+2. status and doctor
+3. reversible mutations
+4. JSON/frontmatter editors
+5. effective-state explanations
+
+## Out of Scope for V1 but Worth Considering
+- interactive TUI mode
+- live watch mode
+- cloud sync
+- policy files for teams
+- signed bundle imports and exports
+- visual dependency graph for agents, skills, tools, and tasks
+
+## Definition of Done for V1
+V1 is done when a user can:
+- list all major `.agents` resources
+- inspect effective state
+- enable and disable resources safely
+- modify core settings without hand-editing JSON
+- manage MCP servers and tools
+- control per-agent skill access
+- create backups and restore from them
+- run doctor and get useful diagnostics

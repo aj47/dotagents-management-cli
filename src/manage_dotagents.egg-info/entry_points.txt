@@ -1,0 +1,2 @@
+[console_scripts]
+manage-dotagents = dotagents_management_cli.cli:main
