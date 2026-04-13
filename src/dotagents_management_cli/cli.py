@@ -1747,6 +1747,8 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         ]
         if category.key == "skills":
             message.append("Press a to toggle all skills for the current target scope.")
+        if category.key == "mcp-servers":
+            message.append("Press n to add a new MCP server.")
         if browser_data.warnings:
             message.extend(["", *browser_data.warnings])
         return "\n".join(message)
@@ -1768,6 +1770,8 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
         f"State: {'enabled' if is_item_enabled(item) else 'disabled'} ({item.get('current_state', 'unknown')})",
         f"Scope: {item.get('scope', '')}",
     ]
+    if item.get("source"):
+        lines.append(f"Source: {item['source']}")
     if item.get("source_path"):
         lines.append(f"Path: {item['source_path']}")
     if item.get("reason"):
@@ -1781,6 +1785,12 @@ def describe_selected_item(category: TuiCategory, item: dict[str, Any] | None, b
     ])
     if category.key == "skills":
         lines.append("- Press a to toggle all skills for the current target scope")
+    if category.key == "mcp-servers":
+        lines.extend([
+            "- Press n to add new server",
+            "- Press e to edit server",
+            "- Press x to remove server",
+        ])
     if browser_data.warnings:
         lines.extend(["", "Warnings:", *browser_data.warnings])
     return "\n".join(lines)
@@ -2174,6 +2184,102 @@ def preferred_toggle_scope(current_scope: str, item: dict[str, Any]) -> str | No
     return None
 
 
+def curses_prompt_confirm(stdscr: Any, title: str, message: str) -> bool:
+    """Show a confirmation dialog. Returns True if confirmed, False otherwise."""
+    height, width = stdscr.getmaxyx()
+    win_height = 8
+    win_width = min(max(56, len(message) + 6), max(56, width - 4))
+    start_y = max(1, (height - win_height) // 2)
+    start_x = max(1, (width - win_width) // 2)
+    win = curses.newwin(win_height, win_width, start_y, start_x)
+    win.keypad(True)
+    win.box()
+    safe_addnstr(win, 1, 2, title, curses.A_BOLD)
+    safe_addnstr(win, 3, 2, message)
+    safe_addnstr(win, 5, 2, "Press y to confirm, n or Esc to cancel")
+    win.refresh()
+    while True:
+        key = win.getch()
+        if key in {ord("y"), ord("Y")}:
+            return True
+        if key in {ord("n"), ord("N"), 27}:
+            return False
+
+
+MCP_TRANSPORT_OPTIONS = [("stdio", "stdio (command-based)"), ("sse", "sse/http (URL-based)")]
+
+
+def curses_prompt_mcp_server_add(stdscr: Any) -> dict[str, Any] | None:
+    """Prompt for new MCP server details. Returns config dict or None if cancelled."""
+    server_id = curses_prompt_text(stdscr, "Add MCP Server", "Enter server ID:")
+    if not server_id:
+        return None
+
+    transport = curses_prompt_select(stdscr, "Select transport type:", MCP_TRANSPORT_OPTIONS)
+    if not transport:
+        return None
+
+    if transport == "stdio":
+        command = curses_prompt_text(stdscr, "Add MCP Server", "Enter command (e.g., npx -y @modelcontextprotocol/server-xyz):")
+        if not command:
+            return None
+        args_raw = curses_prompt_text(stdscr, "Add MCP Server", "Enter args (space-separated, or leave blank):")
+        args = args_raw.split() if args_raw else []
+        env_raw = curses_prompt_text(stdscr, "Add MCP Server", "Enter env vars (KEY=VAL KEY2=VAL2, or leave blank):")
+        env = env_raw.split() if env_raw else []
+        return {"id": server_id, "command": command, "args": args, "env": env}
+    else:
+        url = curses_prompt_text(stdscr, "Add MCP Server", "Enter server URL:")
+        if not url:
+            return None
+        return {"id": server_id, "url": url}
+
+
+def curses_prompt_mcp_server_edit(stdscr: Any, item: dict[str, Any]) -> dict[str, Any] | None:
+    """Prompt for editing MCP server details. Returns updates dict or None if cancelled."""
+    server_id = item["id"]
+    config = item.get("config") or {}
+
+    # Determine current transport type
+    is_stdio = "command" in config
+    current_type = "stdio" if is_stdio else "sse"
+
+    options = [
+        ("command", f"Change command (current: {config.get('command', 'N/A')})"),
+        ("args", f"Change args (current: {config.get('args', [])})"),
+        ("env", f"Change env (current: {config.get('env', {})})"),
+        ("url", f"Change URL (current: {config.get('url', 'N/A')})"),
+    ]
+
+    field = curses_prompt_select(stdscr, f"Edit MCP Server: {server_id}", options)
+    if not field:
+        return None
+
+    if field == "command":
+        new_command = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new command (current: {config.get('command', '')}):")
+        if new_command is None:
+            return None
+        return {"id": server_id, "command": new_command}
+    elif field == "args":
+        current_args = " ".join(config.get("args", []))
+        new_args_raw = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new args (current: {current_args}):")
+        if new_args_raw is None:
+            return None
+        return {"id": server_id, "args": new_args_raw.split() if new_args_raw else []}
+    elif field == "env":
+        current_env = " ".join(f"{k}={v}" for k, v in (config.get("env") or {}).items())
+        new_env_raw = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new env (KEY=VAL, current: {current_env}):")
+        if new_env_raw is None:
+            return None
+        return {"id": server_id, "env": new_env_raw.split() if new_env_raw else []}
+    elif field == "url":
+        new_url = curses_prompt_text(stdscr, "Edit MCP Server", f"Enter new URL (current: {config.get('url', '')}):")
+        if new_url is None:
+            return None
+        return {"id": server_id, "url": new_url}
+    return None
+
+
 def run_tui_utility_command(
     command_args: list[str],
     *,
@@ -2200,6 +2306,10 @@ def inspect_selected_item(
     if category.key == "agents":
         result = run_command_for_interactive(["show", "agent", item["id"]], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
         return result.human_text
+    if category.key == "mcp-servers":
+        result = run_command_for_interactive(["show", "mcp-server", item["id"]], ctx=ctx, scope=state.scope, dry_run=state.dry_run, env=env)
+        source_info = f"\nSource: {item.get('source', '.agents')}" if item.get("source") else ""
+        return result.human_text + source_info
     return describe_selected_item(category, item, browser_data)
 
 
@@ -2269,7 +2379,7 @@ def draw_tui(stdscr: Any, state: TuiState, browser_data: TuiBrowserData) -> None
     for offset, line in enumerate(activity_lines[:activity_space], start=0):
         safe_addnstr(stdscr, pane_top + 2 + detail_space + offset, left_width + middle_width + 1, line)
     stdscr.hline(height - 3, 0, curses.ACS_HLINE, width)
-    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  p/u/b sync  a toggle all  A auto-sync  r refresh  o status  c doctor  f diff  s scope  d dry-run  q quit"
+    footer = "↑/↓ move  Tab/←/→ pane  Enter inspect  t toggle  n add  e edit  x remove  p/u/b sync  a all  A auto-sync  r refresh  s scope  q quit"
     safe_addnstr(stdscr, height - 2, 2, footer)
     stdscr.refresh()
 
@@ -2406,6 +2516,47 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                 browser_data = build_tui_browser_data(ctx, state.scope)
                 continue
             if key == ord("e"):
+                category = current_tui_category(state, browser_data)
+                item = current_tui_item(state, browser_data)
+                # If in MCP Servers with an item selected, edit the server
+                if category.key == "mcp-servers" and item is not None and state.focus == "items":
+                    # Check if this is from .agents (editable) or a harness (read-only display)
+                    source = item.get("source", ".agents")
+                    if source != ".agents":
+                        state.status_message = f"Cannot edit server from {source}. Only .agents servers are editable."
+                        continue
+                    target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                    if target_scope not in {"global", "workspace"}:
+                        resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                        if not resolved_scope:
+                            state.status_message = "Cancelled"
+                            continue
+                        target_scope = resolved_scope
+                    edit_data = curses_prompt_mcp_server_edit(stdscr, item)
+                    if not edit_data:
+                        state.status_message = "Cancelled"
+                        continue
+                    command_args = ["edit", "mcp-server", edit_data["id"]]
+                    if "command" in edit_data:
+                        command_args.extend(["--command", edit_data["command"]])
+                    if "args" in edit_data:
+                        for arg in edit_data["args"]:
+                            command_args.extend(["--args", arg])
+                    if "env" in edit_data:
+                        for env_item in edit_data["env"]:
+                            command_args.extend(["--env", env_item])
+                    if "url" in edit_data:
+                        command_args.extend(["--url", edit_data["url"]])
+                    try:
+                        result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                        state.last_output = result.human_text
+                        state.status_message = f"Edited MCP server {edit_data['id']}"
+                        browser_data = build_tui_browser_data(ctx, state.scope)
+                    except CliError as exc:
+                        state.last_output = f"Error: {exc}"
+                        state.status_message = "Error"
+                    continue
+                # Otherwise, set scope to effective
                 state.scope = "effective"
                 state.status_message = "Scope set to effective"
                 browser_data = build_tui_browser_data(ctx, state.scope)
@@ -2510,6 +2661,70 @@ def run_curses_tui(args: argparse.Namespace, *, cwd: Path | None = None, env: di
                     result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
                     state.last_output = result.human_text
                     state.status_message = f"Toggled {item['id']}"
+                    browser_data = build_tui_browser_data(ctx, state.scope)
+                except CliError as exc:
+                    state.last_output = f"Error: {exc}"
+                    state.status_message = "Error"
+                continue
+            if key == ord("n"):
+                category = current_tui_category(state, browser_data)
+                if category.key != "mcp-servers":
+                    state.status_message = "Press n in MCP Servers to add a new server"
+                    continue
+                target_scope = state.scope
+                if target_scope not in {"global", "workspace"}:
+                    resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                    if not resolved_scope:
+                        state.status_message = "Cancelled"
+                        continue
+                    target_scope = resolved_scope
+                add_data = curses_prompt_mcp_server_add(stdscr)
+                if not add_data:
+                    state.status_message = "Cancelled"
+                    continue
+                command_args = ["add", "mcp-server", add_data["id"]]
+                if "command" in add_data:
+                    command_args.extend(["--command", add_data["command"]])
+                    for arg in add_data.get("args", []):
+                        command_args.extend(["--args", arg])
+                    for env_item in add_data.get("env", []):
+                        command_args.extend(["--env", env_item])
+                if "url" in add_data:
+                    command_args.extend(["--url", add_data["url"]])
+                try:
+                    result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                    state.last_output = result.human_text
+                    state.status_message = f"Added MCP server {add_data['id']}"
+                    browser_data = build_tui_browser_data(ctx, state.scope)
+                except CliError as exc:
+                    state.last_output = f"Error: {exc}"
+                    state.status_message = "Error"
+                continue
+            if key == ord("x"):
+                category = current_tui_category(state, browser_data)
+                item = current_tui_item(state, browser_data)
+                if category.key != "mcp-servers" or item is None:
+                    state.status_message = "Select an MCP server to remove"
+                    continue
+                source = item.get("source", ".agents")
+                if source != ".agents":
+                    state.status_message = f"Cannot remove server from {source}. Only .agents servers are removable."
+                    continue
+                target_scope = preferred_toggle_scope(state.scope, item) or state.scope
+                if target_scope not in {"global", "workspace"}:
+                    resolved_scope = resolve_tui_mutation_scope(stdscr, state.scope)
+                    if not resolved_scope:
+                        state.status_message = "Cancelled"
+                        continue
+                    target_scope = resolved_scope
+                if not curses_prompt_confirm(stdscr, "Remove MCP Server", f"Remove server '{item['id']}'?"):
+                    state.status_message = "Cancelled"
+                    continue
+                command_args = ["remove", "mcp-server", item["id"]]
+                try:
+                    result = run_command_for_interactive(command_args, ctx=ctx, scope=target_scope, dry_run=state.dry_run, env=env)
+                    state.last_output = result.human_text
+                    state.status_message = f"Removed MCP server {item['id']}"
                     browser_data = build_tui_browser_data(ctx, state.scope)
                 except CliError as exc:
                     state.last_output = f"Error: {exc}"
