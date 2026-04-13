@@ -85,6 +85,22 @@ class AgentAdapter(abc.ABC):
         """Return True if the target is out of sync with the .agents directory."""
         return False
 
+    def list_mcp_servers(self, ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+        """Return MCP servers from this harness's native config."""
+        return []
+
+    def add_mcp_server(self, ctx: AppContext, server_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        """Add an MCP server to this harness's native config."""
+        raise CliError(f"add_mcp_server not supported by {type(self).__name__}")
+
+    def remove_mcp_server(self, ctx: AppContext, server_id: str) -> dict[str, Any]:
+        """Remove an MCP server from this harness's native config."""
+        raise CliError(f"remove_mcp_server not supported by {type(self).__name__}")
+
+    def edit_mcp_server(self, ctx: AppContext, server_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Edit an MCP server in this harness's native config."""
+        raise CliError(f"edit_mcp_server not supported by {type(self).__name__}")
+
 
 class GenericDirectoryAdapter(AgentAdapter):
     target_name: str = ""
@@ -194,6 +210,56 @@ class GenericDirectoryAdapter(AgentAdapter):
 
         return source_mtime > 0 and source_mtime > target_mtime
 
+    def _native_mcp_path(self, ctx: AppContext) -> Path:
+        return ctx.cwd / self.dir_name / "mcp.json"
+
+    def _load_native_mcp(self, ctx: AppContext) -> tuple[Path, dict[str, Any]]:
+        path = self._native_mcp_path(ctx)
+        if path.exists():
+            return path, load_json_object(path)
+        return path, {}
+
+    def list_mcp_servers(self, ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+        path, config = self._load_native_mcp(ctx)
+        if not config:
+            return []
+        servers = mcp_servers_from_config(config)
+        rows: list[dict[str, Any]] = []
+        for server_id, server_cfg in sorted(servers.items()):
+            rows.append({"id": server_id, "type": "mcp-server", "current_state": "present", "source": self.target_name, "source_path": str(path), "config": server_cfg})
+        return rows
+
+    def add_mcp_server(self, ctx: AppContext, server_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = data.setdefault("mcpServers", {})
+        if server_id in servers:
+            raise CliError(f"MCP server `{server_id}` already exists in {self.target_name}.")
+        servers[server_id] = config
+        ensure_dir(path.parent)
+        atomic_write_json(path, data)
+        return {"action": "add", "target": self.target_name, "id": server_id, "config": config, "path": str(path)}
+
+    def remove_mcp_server(self, ctx: AppContext, server_id: str) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in {self.target_name}.")
+        removed = servers[server_id]
+        del data["mcpServers"][server_id]
+        atomic_write_json(path, data)
+        return {"action": "remove", "target": self.target_name, "id": server_id, "removed_config": removed, "path": str(path)}
+
+    def edit_mcp_server(self, ctx: AppContext, server_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in {self.target_name}.")
+        old_config = dict(servers[server_id])
+        servers[server_id].update(updates)
+        data["mcpServers"][server_id] = servers[server_id]
+        atomic_write_json(path, data)
+        return {"action": "edit", "target": self.target_name, "id": server_id, "old_config": old_config, "new_config": servers[server_id], "path": str(path)}
+
 
 class CursorAdapter(GenericDirectoryAdapter):
     target_name = "cursor"
@@ -273,6 +339,55 @@ class ClaudeCodeAdapter(AgentAdapter):
         target_mtime = get_tree_mtime(mcp_dest)
 
         return source_mtime > 0 and source_mtime > target_mtime
+
+    def _native_mcp_path(self, ctx: AppContext) -> Path:
+        return ctx.cwd / "claude.json"
+
+    def _load_native_mcp(self, ctx: AppContext) -> tuple[Path, dict[str, Any]]:
+        path = self._native_mcp_path(ctx)
+        if path.exists():
+            return path, load_json_object(path)
+        return path, {}
+
+    def list_mcp_servers(self, ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+        path, config = self._load_native_mcp(ctx)
+        if not config:
+            return []
+        servers = mcp_servers_from_config(config)
+        rows: list[dict[str, Any]] = []
+        for server_id, server_cfg in sorted(servers.items()):
+            rows.append({"id": server_id, "type": "mcp-server", "current_state": "present", "source": "claude-code", "source_path": str(path), "config": server_cfg})
+        return rows
+
+    def add_mcp_server(self, ctx: AppContext, server_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = data.setdefault("mcpServers", {})
+        if server_id in servers:
+            raise CliError(f"MCP server `{server_id}` already exists in claude-code.")
+        servers[server_id] = config
+        atomic_write_json(path, data)
+        return {"action": "add", "target": "claude-code", "id": server_id, "config": config, "path": str(path)}
+
+    def remove_mcp_server(self, ctx: AppContext, server_id: str) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in claude-code.")
+        removed = servers[server_id]
+        del data["mcpServers"][server_id]
+        atomic_write_json(path, data)
+        return {"action": "remove", "target": "claude-code", "id": server_id, "removed_config": removed, "path": str(path)}
+
+    def edit_mcp_server(self, ctx: AppContext, server_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        path, data = self._load_native_mcp(ctx)
+        servers = mcp_servers_from_config(data)
+        if server_id not in servers:
+            raise CliError(f"Unknown mcp-server `{server_id}` in claude-code.")
+        old_config = dict(servers[server_id])
+        servers[server_id].update(updates)
+        data["mcpServers"][server_id] = servers[server_id]
+        atomic_write_json(path, data)
+        return {"action": "edit", "target": "claude-code", "id": server_id, "old_config": old_config, "new_config": servers[server_id], "path": str(path)}
 
 
 class DummyAdapter(AgentAdapter):
@@ -771,11 +886,25 @@ def build_mcp_server_rows(path: Path, config: dict[str, Any], scope: str) -> lis
                 "type": "mcp-server",
                 "current_state": "disabled" if server_id in disabled else "present",
                 "scope": scope,
+                "source": ".agents",
                 "source_path": str(path),
                 "reason": "runtime-disabled in mcp.json" if server_id in disabled else "",
             }
         )
     return rows
+
+
+def collect_all_harness_mcp_servers(ctx: AppContext, scope: str) -> list[dict[str, Any]]:
+    """Collect MCP servers from all registered harness native configs."""
+    rows: list[dict[str, Any]] = []
+    for target_id, adapter_cls in TARGET_REGISTRY.items():
+        adapter = adapter_cls()
+        try:
+            harness_rows = adapter.list_mcp_servers(ctx, scope)
+            rows.extend(harness_rows)
+        except Exception:
+            pass
+    return sorted(rows, key=lambda r: (r.get("source", ""), r.get("id", "")))
 
 
 def build_mcp_tool_rows(path: Path, config: dict[str, Any], scope: str) -> list[dict[str, Any]]:
@@ -1190,7 +1319,9 @@ def list_command(ctx: AppContext, scope: str, list_type: str) -> CommandResult:
     if list_type == "mcp-servers":
         path, config = read_json_for_scope(ctx, scope, "mcp.json")
         rows = build_mcp_server_rows(path, config, scope)
-        return CommandResult(payload={"scope": scope, "type": list_type, "items": rows}, human_text=render_table(rows, ["id", "type", "current_state", "scope", "reason"]))
+        harness_rows = collect_all_harness_mcp_servers(ctx, scope)
+        rows.extend(harness_rows)
+        return CommandResult(payload={"scope": scope, "type": list_type, "items": rows}, human_text=render_table(rows, ["id", "type", "current_state", "source", "scope", "reason"]))
     if list_type == "mcp-tools":
         path, config = read_json_for_scope(ctx, scope, "mcp.json")
         rows = build_mcp_tool_rows(path, config, scope)
